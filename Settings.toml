@@ -1,0 +1,6 @@
+# Whether files should be placed in a directory named after the server they have been pulled from.
+use-server-name-directories = true
+
+# A list of server names mapped to a URL containing a valid RSS/Atom feed
+[servers]
+"Plato Releases" = { url = "https://github.com/baskerville/plato/releases.atom" }
