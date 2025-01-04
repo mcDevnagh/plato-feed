@@ -11,6 +11,8 @@ const SETTINGS_PATH: &str = "Settings.toml";
 pub struct Settings {
     /// Mapping of server names to their respective [Instance] settings.
     pub servers: HashMap<String, Instance>,
+    /// Number of concurrent HTTP Requests to make
+    pub concurrent_requests: usize,
     /// Whether files should be placed in a directory named after the server they have been pulled
     /// from.
     pub use_server_name_directories: bool,
@@ -31,6 +33,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             servers: HashMap::new(),
+            concurrent_requests: 5,
             use_server_name_directories: true,
         }
     }
