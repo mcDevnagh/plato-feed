@@ -6,11 +6,18 @@ use anyhow::{anyhow, format_err, Context, Error, Result};
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use feed_rs::parser;
 use futures::future::join_all;
+use lazy_static::lazy_static;
+use regex::Regex;
 use reqwest::Client;
 use settings::Settings;
 use sha2::{Digest, Sha224};
 use slugify::slugify;
 use tokio::{fs, sync::Semaphore, task::JoinHandle};
+
+lazy_static! {
+    static ref CLEAR_REGEX: Regex =
+        Regex::new(r"<\s*img[^>]*>|<\s*iframe[^>]*>(.*</\s*iframe\s*>)?").unwrap();
+}
 
 async fn run() -> Result<()> {
     let mut args = env::args().skip(1);
@@ -113,6 +120,7 @@ async fn run() -> Result<()> {
                 let filename = save_path.join(filename);
 
                 if let Some(content) = entry.content.and_then(|c| c.body) {
+                    let content = CLEAR_REGEX.replace_all(&content, "");
                     builder
                         .add_content(EpubContent::new("article.html", content.as_bytes()))
                         .map_err(|e| anyhow!(e))?;
