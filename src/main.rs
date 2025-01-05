@@ -1,21 +1,13 @@
 mod settings;
 
-use std::{
-    env,
-    fs::{self},
-    path::PathBuf,
-};
+use std::{cmp::min, env, path::PathBuf, sync::Arc};
 
-use anyhow::{format_err, Context, Result};
+use anyhow::{anyhow, format_err, Context, Error, Result};
 use feed_rs::parser;
-use futures::{stream, StreamExt};
+use futures::future::join_all;
 use reqwest::Client;
 use settings::Settings;
-
-struct Feed {
-    server: String,
-    feed: feed_rs::model::Feed,
-}
+use tokio::{fs, sync::Semaphore, task::JoinHandle};
 
 async fn run() -> Result<()> {
     let mut args = env::args().skip(1);
@@ -30,50 +22,96 @@ async fn run() -> Result<()> {
 
     let settings = Settings::load().with_context(|| "failed to load settings")?;
 
+    if !save_path.exists() {
+        fs::create_dir(&save_path).await?;
+    }
+
     // Create directory for each instance name in the save path.
     if settings.use_server_name_directories {
+        let mut tasks = Vec::with_capacity(settings.servers.len());
         for name in settings.servers.keys() {
             let instance_path = save_path.join(name);
-            if !instance_path.exists() {
-                fs::create_dir(&instance_path)?;
-            }
+            let task = tokio::spawn(async move {
+                if !instance_path.exists() {
+                    fs::create_dir(&instance_path).await?;
+                }
+
+                Ok::<(), Error>(())
+            });
+            tasks.push(task);
+        }
+
+        let err: Vec<Error> = join_all(tasks)
+            .await
+            .into_iter()
+            .filter_map(|t| {
+                match t {
+                    Ok(ok) => ok,
+                    Err(err) => Err(anyhow!(err)),
+                }
+                .err()
+            })
+            .collect();
+
+        if !err.is_empty() {
+            return Err(anyhow!(
+                "Failed to create server name directories: {:?}",
+                err
+            ));
         }
     }
 
     let client = Client::builder()
         .user_agent(format!("plato-feed/{}", env!("CARGO_PKG_VERSION")))
         .build()?;
+    let client = Arc::new(client);
 
-    stream::iter(settings.servers.into_iter())
-        .map(|(server, instance)| {
-            let client = &client;
-            async move {
-                let res = client.get(instance.url).send().await?;
-                let body = res.bytes().await?;
+    let semaphore = Semaphore::new(min(settings.concurrent_requests, Semaphore::MAX_PERMITS));
+    let semaphore = Arc::new(semaphore);
 
-                let feed = parser::parse(body.as_ref())?;
-                Ok(Feed { server, feed })
+    let mut tasks = Vec::with_capacity(settings.servers.len());
+    for (server, instance) in settings.servers {
+        let client = Arc::clone(&client);
+        let semaphore = Arc::clone(&semaphore);
+        let task = tokio::spawn(async move {
+            let permit = semaphore.acquire().await?;
+            let res = client.get(instance.url).send().await?;
+            let body = res.bytes().await?;
+            drop(permit);
+
+            let feed = parser::parse(body.as_ref())?;
+            let mut tasks = Vec::new();
+            for entry in feed.entries {
+                println!(
+                    "{}\n{}\n{}\n",
+                    entry.id,
+                    entry.title.map(|t| t.content).unwrap_or_default(),
+                    entry.content.map(|c| c.content_type).unwrap(),
+                );
+                let task = tokio::spawn(async move { Ok(()) });
+                tasks.push(task);
             }
-        })
-        .buffered(settings.concurrent_requests)
-        .for_each(|r: Result<Feed>| async {
-            match r {
-                Err(err) => eprintln!("{}", err),
-                Ok(feed) => {
-                    for entry in feed.feed.entries {
-                        println!(
-                            "{}\n{}\n",
-                            entry.title.map(|t| t.content).unwrap_or_default(),
-                            entry.content.and_then(|c| c.body).unwrap_or_default(),
-                        );
+
+            let res: Result<Vec<JoinHandle<Result<()>>>> = Ok(tasks);
+            res
+        });
+        tasks.push(task);
+    }
+
+    for result in join_all(tasks).await {
+        match result {
+            Err(e) => eprintln!("{}", e),
+            Ok(Err(e)) => eprintln!("{}", e),
+            Ok(Ok(tasks)) => {
+                for result in join_all(tasks).await {
+                    match result {
+                        Err(e) => eprintln!("{}", e),
+                        Ok(Err(e)) => eprintln!("{}", e),
+                        Ok(Ok(_)) => (),
                     }
                 }
-            };
-        })
-        .await;
-
-    if !save_path.exists() {
-        fs::create_dir(&save_path)?;
+            }
+        }
     }
 
     Ok(())
@@ -84,7 +122,7 @@ async fn main() -> Result<()> {
     log_panics::init();
     if let Err(err) = run().await {
         eprintln!("Error: {:#}", err);
-        fs::write("feed_error.txt", format!("{:#}", err)).ok();
+        fs::write("feed_error.txt", format!("{:#}", err)).await.ok();
         return Err(err);
     }
 
