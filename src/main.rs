@@ -3,10 +3,13 @@ mod settings;
 use std::{cmp::min, env, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, format_err, Context, Error, Result};
+use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use feed_rs::parser;
 use futures::future::join_all;
 use reqwest::Client;
 use settings::Settings;
+use sha2::{Digest, Sha224};
+use slugify::slugify;
 use tokio::{fs, sync::Semaphore, task::JoinHandle};
 
 async fn run() -> Result<()> {
@@ -71,6 +74,12 @@ async fn run() -> Result<()> {
 
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
+        let save_path = if settings.use_server_name_directories {
+            save_path.join(server)
+        } else {
+            save_path.clone()
+        };
+
         let client = Arc::clone(&client);
         let semaphore = Arc::clone(&semaphore);
         let task = tokio::spawn(async move {
@@ -82,12 +91,39 @@ async fn run() -> Result<()> {
             let feed = parser::parse(body.as_ref())?;
             let mut tasks = Vec::new();
             for entry in feed.entries {
-                println!(
-                    "{}\n{}\n{}\n",
-                    entry.id,
-                    entry.title.map(|t| t.content).unwrap_or_default(),
-                    entry.content.map(|c| c.content_type).unwrap(),
-                );
+                let mut builder = EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?)
+                    .map_err(|e| anyhow!(e))?;
+                builder.set_authors(entry.authors.into_iter().map(|a| a.name).collect());
+
+                let mut filename = Vec::new();
+                if let Some(date) = entry.published {
+                    filename.push(date.format("%Y-%m-%dT%H-%M-%S").to_string());
+                    builder.set_publication_date(date);
+                }
+
+                if let Some(title) = entry.title {
+                    builder.set_title(&title.content);
+                    filename.push(title.content);
+                }
+
+                let mut hasher = Sha224::new();
+                hasher.update(&entry.id);
+                filename.push(format!("{:x}", hasher.finalize()));
+                let filename = format!("{}.epub", slugify!(&filename.join("-"), max_length = 250));
+                let filename = save_path.join(filename);
+
+                if let Some(content) = entry.content.and_then(|c| c.body) {
+                    builder
+                        .add_content(EpubContent::new("article.html", content.as_bytes()))
+                        .map_err(|e| anyhow!(e))?;
+                } else if let Some(content) = entry.summary {
+                    builder
+                        .add_content(EpubContent::new("article.html", content.content.as_bytes()))
+                        .map_err(|e| anyhow!(e))?;
+                }
+
+                let file = std::fs::File::create(filename)?;
+                builder.generate(file).map_err(|e| anyhow!(e))?;
                 let task = tokio::spawn(async move { Ok(()) });
                 tasks.push(task);
             }
