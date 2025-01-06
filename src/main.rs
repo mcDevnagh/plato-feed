@@ -36,10 +36,13 @@ async fn run() -> Result<()> {
         args.next()
             .ok_or_else(|| format_err!("missing argument: library path"))?,
     );
+    let library_path = Arc::new(library_path);
+
     let save_path = PathBuf::from(
         args.next()
             .ok_or_else(|| format_err!("missing argument: save path"))?,
     );
+    let save_path = Arc::new(save_path);
 
     let settings = Settings::load().with_context(|| "failed to load settings")?;
 
@@ -64,7 +67,7 @@ async fn run() -> Result<()> {
     }
 
     if !save_path.exists() {
-        fs::create_dir(&save_path).await?;
+        fs::create_dir(save_path.as_ref()).await?;
     }
 
     let sigterm = Arc::new(AtomicBool::new(false));
@@ -118,16 +121,17 @@ async fn run() -> Result<()> {
 
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
-        let library_path = library_path.clone();
+        let library_path = Arc::clone(&library_path);
         let save_path = if settings.use_server_name_directories {
-            save_path.join(&server)
+            Arc::new(save_path.join(&server))
         } else {
-            save_path.clone()
+            Arc::clone(&save_path)
         };
 
         let client = Arc::clone(&client);
         let semaphore = Arc::clone(&semaphore);
         let sigterm = Arc::clone(&sigterm);
+        let server = Arc::new(server);
         let task = tokio::spawn(async move {
             let permit = semaphore.acquire().await?;
             if sigterm.load(Ordering::Relaxed) {
@@ -146,12 +150,17 @@ async fn run() -> Result<()> {
 
             drop(permit);
             let feed = parser::parse(body.as_ref())?;
-            let publisher = feed.title.map_or_else(|| server.clone(), |t| t.content);
+            let publisher = if let Some(title) = feed.title {
+                Arc::new(title.content)
+            } else {
+                Arc::clone(&server)
+            };
+
             let mut tasks = Vec::new();
             for entry in feed.entries {
-                let library_path = library_path.clone();
-                let save_path = save_path.clone();
-                let publisher = publisher.clone();
+                let library_path = Arc::clone(&library_path);
+                let save_path = Arc::clone(&save_path);
+                let publisher = Arc::clone(&publisher);
                 let sigterm = Arc::clone(&sigterm);
                 let task = tokio::spawn(async move {
                     if sigterm.load(Ordering::Relaxed) {
@@ -192,7 +201,7 @@ async fn run() -> Result<()> {
                         return Ok(());
                     }
 
-                    let path = filename.strip_prefix(&library_path)?;
+                    let path = filename.strip_prefix(library_path.as_ref())?;
 
                     if let Some(content) = entry.content.and_then(|c| c.body) {
                         let content = CLEAR_REGEX.replace_all(&content, "");
@@ -213,7 +222,7 @@ async fn run() -> Result<()> {
                             "title": title,
                             "author": author,
                             "year": year,
-                            "publisher": publisher,
+                            "publisher": publisher.as_ref(),
                             "identifier": entry.id,
                             "added": Local::now().naive_local(),
                             "file": {
