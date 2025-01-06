@@ -35,6 +35,11 @@ rustup target add arm-unknown-linux-gnueabihf
 cargo build --release --target=arm-unknown-linux-gnueabihf
 ```
 
+# TODO
+- [ ] add cover image
+- [ ] display images
+- [ ] fetch full article
+
 # Acknowledgements
 This hook is based on the work done for the following hooks.
 
