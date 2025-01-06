@@ -3,12 +3,14 @@ mod settings;
 use std::{cmp::min, env, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, format_err, Context, Error, Result};
+use chrono::Local;
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use feed_rs::parser;
 use futures::future::join_all;
 use lazy_static::lazy_static;
 use regex::Regex;
 use reqwest::Client;
+use serde_json::json;
 use settings::Settings;
 use sha2::{Digest, Sha224};
 use slugify::slugify;
@@ -21,7 +23,7 @@ lazy_static! {
 
 async fn run() -> Result<()> {
     let mut args = env::args().skip(1);
-    let _library_path = PathBuf::from(
+    let library_path = PathBuf::from(
         args.next()
             .ok_or_else(|| format_err!("missing argument: library path"))?,
     );
@@ -81,8 +83,9 @@ async fn run() -> Result<()> {
 
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
+        let library_path = library_path.clone();
         let save_path = if settings.use_server_name_directories {
-            save_path.join(server)
+            save_path.join(&server)
         } else {
             save_path.clone()
         };
@@ -96,29 +99,43 @@ async fn run() -> Result<()> {
             drop(permit);
 
             let feed = parser::parse(body.as_ref())?;
+            let publisher = feed.title.map_or_else(|| server.clone(), |t| t.content);
             let mut tasks = Vec::new();
             for entry in feed.entries {
+                let library_path = library_path.clone();
                 let save_path = save_path.clone();
+                let publisher = publisher.clone();
                 let task = tokio::spawn(async move {
                     let mut builder = EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?)
                         .map_err(|e| anyhow!(e))?;
-                    builder.set_authors(entry.authors.into_iter().map(|a| a.name).collect());
+
+                    let authors: Vec<String> = entry.authors.into_iter().map(|a| a.name).collect();
+                    let author = authors.join(", ");
+                    builder.set_authors(authors);
 
                     let mut filename = Vec::new();
-                    if let Some(date) = entry.published {
+                    let year = if let Some(date) = entry.published {
                         filename.push(date.format("%Y-%m-%dT%H:%M:%S").to_string());
+                        let year = date.format("%Y").to_string();
                         builder.set_publication_date(date);
-                    }
+                        year
+                    } else {
+                        String::default()
+                    };
 
-                    if let Some(title) = entry.title {
+                    let title = if let Some(title) = entry.title {
                         filename.push(slugify!(&title.content, max_length = 32));
                         builder.set_title(&title.content);
-                    }
+                        title.content
+                    } else {
+                        entry.id.clone()
+                    };
 
                     let mut hasher = Sha224::new();
                     hasher.update(&entry.id);
                     filename.push(format!("{:x}.epub", hasher.finalize()));
                     let filename = save_path.join(&filename.join("-"));
+                    let path = filename.strip_prefix(&library_path)?;
 
                     if let Some(content) = entry.content.and_then(|c| c.body) {
                         let content = CLEAR_REGEX.replace_all(&content, "");
@@ -131,8 +148,25 @@ async fn run() -> Result<()> {
                         builder.add_description(content.content);
                     }
 
-                    let file = std::fs::File::create(filename)?;
-                    builder.generate(file).map_err(|e| anyhow!(e))?;
+                    let file = std::fs::File::create(&filename)?;
+                    builder.generate(&file).map_err(|e| anyhow!(e))?;
+                    let event = json!({
+                        "type": "addDocument",
+                        "info": {
+                            "title": title,
+                            "author": author,
+                            "year": year,
+                            "publisher": publisher,
+                            "identifier": entry.id,
+                            "added": Local::now().naive_local(),
+                            "file": {
+                                "path": path,
+                                "kind": "epub",
+                                "size": file.metadata().ok().map_or(0, |m| m.len()),
+                            }
+                        },
+                    });
+                    println!("{event}");
                     Ok(())
                 });
                 tasks.push(task);
