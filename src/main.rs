@@ -135,6 +135,10 @@ async fn run() -> Result<()> {
                     hasher.update(&entry.id);
                     filename.push(format!("{:x}.epub", hasher.finalize()));
                     let filename = save_path.join(&filename.join("-"));
+                    if filename.exists() {
+                        return Ok(());
+                    }
+
                     let path = filename.strip_prefix(&library_path)?;
 
                     if let Some(content) = entry.content.and_then(|c| c.body) {
