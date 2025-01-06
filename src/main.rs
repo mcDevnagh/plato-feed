@@ -1,3 +1,4 @@
+mod plato;
 mod settings;
 
 use std::{
@@ -41,6 +42,26 @@ async fn run() -> Result<()> {
     );
 
     let settings = Settings::load().with_context(|| "failed to load settings")?;
+
+    let wifi = args
+        .next()
+        .ok_or_else(|| format_err!("missing argument: wifi status"))
+        .and_then(|v| v.parse::<bool>().map_err(Into::into))?;
+    let online = args
+        .next()
+        .ok_or_else(|| format_err!("missing argument: online status"))
+        .and_then(|v| v.parse::<bool>().map_err(Into::into))?;
+
+    if !online {
+        if !wifi {
+            plato::notify("Establishing a network connection.");
+            plato::set_wifi(true);
+        } else {
+            plato::notify("Waiting for the network to come up.");
+        }
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+    }
 
     if !save_path.exists() {
         fs::create_dir(&save_path).await?;

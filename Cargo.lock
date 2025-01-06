@@ -938,7 +938,6 @@ dependencies = [
  "futures",
  "lazy_static",
  "log-panics",
- "plato-hook-helper",
  "regex",
  "reqwest",
  "serde",
@@ -949,16 +948,6 @@ dependencies = [
  "tokio",
  "toml",
  "url",
-]
-
-[[package]]
-name = "plato-hook-helper"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82e02f1ec9d0dc026b964869675dd1891e3539e872331f9de1ca5b032734e5a6"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
