@@ -104,20 +104,19 @@ async fn run() -> Result<()> {
 
                 let mut filename = Vec::new();
                 if let Some(date) = entry.published {
-                    filename.push(date.format("%Y-%m-%dT%H-%M-%S").to_string());
+                    filename.push(date.format("%Y-%m-%dT%H:%M:%S").to_string());
                     builder.set_publication_date(date);
                 }
 
                 if let Some(title) = entry.title {
+                    filename.push(slugify!(&title.content, max_length = 32));
                     builder.set_title(&title.content);
-                    filename.push(title.content);
                 }
 
                 let mut hasher = Sha224::new();
                 hasher.update(&entry.id);
-                filename.push(format!("{:x}", hasher.finalize()));
-                let filename = format!("{}.epub", slugify!(&filename.join("-"), max_length = 250));
-                let filename = save_path.join(filename);
+                filename.push(format!("{:x}.epub", hasher.finalize()));
+                let filename = save_path.join(&filename.join("-"));
 
                 if let Some(content) = entry.content.and_then(|c| c.body) {
                     let content = CLEAR_REGEX.replace_all(&content, "");
