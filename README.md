@@ -37,7 +37,6 @@ cargo build --release --target=arm-unknown-linux-gnueabihf
 
 # TODO
 - [ ] add cover image
-- [ ] display images
 - [ ] fetch full article
 
 # Acknowledgements

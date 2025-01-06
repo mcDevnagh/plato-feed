@@ -5,6 +5,7 @@ use std::{
     cmp::min,
     env,
     path::PathBuf,
+    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -12,22 +13,29 @@ use std::{
 };
 
 use anyhow::{anyhow, format_err, Context, Error, Result};
+use bytes::Bytes;
 use chrono::Local;
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use feed_rs::parser;
 use futures::future::join_all;
 use lazy_static::lazy_static;
+use mime_guess::{get_mime_extensions, Mime, MimeGuess};
 use regex::Regex;
-use reqwest::Client;
+use reqwest::{header::CONTENT_TYPE, Client};
 use serde_json::json;
 use settings::Settings;
 use sha2::{Digest, Sha224};
 use slugify::slugify;
 use tokio::{fs, sync::Semaphore, task::JoinHandle};
+use url::Url;
 
 lazy_static! {
     static ref CLEAR_REGEX: Regex =
-        Regex::new(r"<\s*img[^>]*>|<\s*iframe[^>]*>(.*</\s*iframe\s*>)?").unwrap();
+        Regex::new(r"<\s*source[^>]*>(.*</\s*source\s*>)?|<\s*iframe[^>]*>(.*</\s*iframe\s*>)?")
+            .unwrap();
+    static ref IMG_REGEX: Regex =
+        Regex::new(r#"<\s*img [^>]*(src\s*=\s*"([^"]*)")[^>]*>"#).unwrap();
+    static ref EXT_REGEX: Regex = Regex::new(r"\.(\S{2,5})$").unwrap();
 }
 
 async fn run() -> Result<()> {
@@ -121,24 +129,23 @@ async fn run() -> Result<()> {
 
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
+        let client = Arc::clone(&client);
         let library_path = Arc::clone(&library_path);
         let save_path = if settings.use_server_name_directories {
             Arc::new(save_path.join(&server))
         } else {
             Arc::clone(&save_path)
         };
-
-        let client = Arc::clone(&client);
         let semaphore = Arc::clone(&semaphore);
-        let sigterm = Arc::clone(&sigterm);
         let server = Arc::new(server);
+        let sigterm = Arc::clone(&sigterm);
         let task = tokio::spawn(async move {
             let permit = semaphore.acquire().await?;
             if sigterm.load(Ordering::Relaxed) {
                 return Err(anyhow!("SIGTERM"));
             }
 
-            let res = client.get(instance.url).send().await?;
+            let res = client.get(&instance.url).send().await?;
             if sigterm.load(Ordering::Relaxed) {
                 return Err(anyhow!("SIGTERM"));
             }
@@ -149,6 +156,10 @@ async fn run() -> Result<()> {
             }
 
             drop(permit);
+            let base = Url::parse(&instance.url).ok().and_then(|u| match u.host() {
+                Some(url::Host::Domain(host)) => Some(host.to_owned()),
+                _ => None,
+            });
             let feed = parser::parse(body.as_ref())?;
             let publisher = if let Some(title) = feed.title {
                 Arc::new(title.content)
@@ -158,9 +169,12 @@ async fn run() -> Result<()> {
 
             let mut tasks = Vec::new();
             for entry in feed.entries {
+                let base = base.clone();
+                let client = Arc::clone(&client);
                 let library_path = Arc::clone(&library_path);
-                let save_path = Arc::clone(&save_path);
                 let publisher = Arc::clone(&publisher);
+                let save_path = Arc::clone(&save_path);
+                let semaphore = Arc::clone(&semaphore);
                 let sigterm = Arc::clone(&sigterm);
                 let task = tokio::spawn(async move {
                     if sigterm.load(Ordering::Relaxed) {
@@ -203,11 +217,120 @@ async fn run() -> Result<()> {
 
                     let path = filename.strip_prefix(library_path.as_ref())?;
 
-                    if let Some(content) = entry.content.and_then(|c| c.body) {
-                        let content = CLEAR_REGEX.replace_all(&content, "");
-                        builder
-                            .add_content(EpubContent::new("article.html", content.as_bytes()))
-                            .map_err(|e| anyhow!(e))?;
+                    if let Some(content) = entry.content {
+                        if let Some(mut body) = content.body {
+                            let href = if content.content_type.subty() == "html" {
+                                body = CLEAR_REGEX.replace_all(&body, "").to_string();
+                                let tasks = IMG_REGEX
+                                    .captures_iter(&body)
+                                    .map(|c| {
+                                        let img = c.get(0).unwrap().as_str().to_owned();
+                                        let url = c
+                                            .get(2)
+                                            .ok_or(anyhow!("Failed to match src"))
+                                            .and_then(|s| Ok(Url::parse(s.as_str())?))
+                                            .and_then(|mut u| {
+                                                if u.has_host() {
+                                                    Ok(u)
+                                                } else if let Some(base) = base.clone() {
+                                                    u.set_host(Some(&base))?;
+                                                    Ok(u)
+                                                } else {
+                                                    Err(anyhow!("no host"))
+                                                }
+                                            });
+                                        let client = Arc::clone(&client);
+                                        let semaphore = Arc::clone(&semaphore);
+                                        let sigterm = Arc::clone(&sigterm);
+                                        let task = tokio::spawn(async move {
+                                            match url {
+                                                Err(err) => Err(err),
+                                                Ok(url) => {
+                                                    let ext = EXT_REGEX
+                                                        .captures(url.path())
+                                                        .and_then(|c| c.get(1))
+                                                        .map(|m| m.as_str().to_owned());
+
+                                                    let permit = semaphore.acquire().await?;
+                                                    if sigterm.load(Ordering::Relaxed) {
+                                                        return Err(anyhow!("SIGTERM"));
+                                                    }
+
+                                                    let res = client.get(url).send().await?;
+                                                    if sigterm.load(Ordering::Relaxed) {
+                                                        return Err(anyhow!("SIGTERM"));
+                                                    }
+
+                                                    let mime = res
+                                                        .headers()
+                                                        .get(CONTENT_TYPE)
+                                                        .and_then(|h| h.to_str().ok())
+                                                        .and_then(|mt| Mime::from_str(mt).ok())
+                                                        .or_else(|| {
+                                                            ext.clone().and_then(|ext| {
+                                                                MimeGuess::from_ext(&ext).first()
+                                                            })
+                                                        })
+                                                        .ok_or(anyhow!("Failed to get mimetype"))?;
+
+                                                    let bytes = res.bytes().await?;
+                                                    drop(permit);
+                                                    if sigterm.load(Ordering::Relaxed) {
+                                                        return Err(anyhow!("SIGTERM"));
+                                                    }
+
+                                                    Ok((bytes, mime, ext))
+                                                }
+                                            }
+                                        });
+                                        (img, task)
+                                    })
+                                    .collect::<Vec<(
+                                        String,
+                                        JoinHandle<Result<(Bytes, Mime, Option<String>)>>,
+                                    )>>();
+
+                                for (i, (img, task)) in tasks.into_iter().enumerate() {
+                                    match task.await {
+                                        Err(err) => eprintln!("{err}"),
+                                        Ok(Err(err)) => eprintln!("{err}"),
+                                        Ok(Ok((bytes, mime, ext))) => {
+                                            let path = format!(
+                                                "{i}.{}",
+                                                ext.or_else(|| get_mime_extensions(&mime)
+                                                    .and_then(|e| e.first())
+                                                    .copied()
+                                                    .map(|x| x.to_owned()))
+                                                    .unwrap_or_default()
+                                            );
+                                            if let Err(err) = builder.add_resource(
+                                                &path,
+                                                bytes.as_ref(),
+                                                mime.as_ref(),
+                                            ) {
+                                                eprintln!("{}", err);
+                                            } else {
+                                                body = body.replace(
+                                                    &img,
+                                                    &format!(r#"<img src="{path}"/>"#),
+                                                );
+                                                continue;
+                                            }
+                                        }
+                                    }
+
+                                    body = body.replace(&img, "");
+                                }
+
+                                "article.html"
+                            } else {
+                                "article.txt"
+                            };
+
+                            builder
+                                .add_content(EpubContent::new(href, body.as_bytes()))
+                                .map_err(|e| anyhow!(e))?;
+                        }
                     }
 
                     if let Some(content) = entry.summary {
