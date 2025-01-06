@@ -73,9 +73,7 @@ async fn run() -> Result<()> {
         }
     }
 
-    let client = Client::builder()
-        .user_agent(format!("plato-feed/{}", env!("CARGO_PKG_VERSION")))
-        .build()?;
+    let client = Client::builder().user_agent(program_name()).build()?;
     let client = Arc::new(client);
 
     let semaphore = Semaphore::new(min(settings.concurrent_requests, Semaphore::MAX_PERMITS));
@@ -112,6 +110,7 @@ async fn run() -> Result<()> {
                     let authors: Vec<String> = entry.authors.into_iter().map(|a| a.name).collect();
                     let author = authors.join(", ");
                     builder.set_authors(authors);
+                    builder.set_generator(program_name());
 
                     let mut filename = Vec::new();
                     let year = if let Some(date) = entry.published {
@@ -199,6 +198,10 @@ async fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn program_name() -> String {
+    format!("plato-feed/{}", env!("CARGO_PKG_VERSION"))
 }
 
 #[tokio::main]
