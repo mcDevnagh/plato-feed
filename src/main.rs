@@ -1,6 +1,14 @@
 mod settings;
 
-use std::{cmp::min, env, path::PathBuf, sync::Arc};
+use std::{
+    cmp::min,
+    env,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::{anyhow, format_err, Context, Error, Result};
 use chrono::Local;
@@ -38,12 +46,20 @@ async fn run() -> Result<()> {
         fs::create_dir(&save_path).await?;
     }
 
+    let sigterm = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&sigterm))?;
+
     // Create directory for each instance name in the save path.
     if settings.use_server_name_directories {
         let mut tasks = Vec::with_capacity(settings.servers.len());
         for name in settings.servers.keys() {
             let instance_path = save_path.join(name);
+            let sigterm = Arc::clone(&sigterm);
             let task = tokio::spawn(async move {
+                if sigterm.load(Ordering::Relaxed) {
+                    return Err(anyhow!("SIGTERM"));
+                }
+
                 if !instance_path.exists() {
                     fs::create_dir(&instance_path).await?;
                 }
@@ -90,12 +106,24 @@ async fn run() -> Result<()> {
 
         let client = Arc::clone(&client);
         let semaphore = Arc::clone(&semaphore);
+        let sigterm = Arc::clone(&sigterm);
         let task = tokio::spawn(async move {
             let permit = semaphore.acquire().await?;
-            let res = client.get(instance.url).send().await?;
-            let body = res.bytes().await?;
-            drop(permit);
+            if sigterm.load(Ordering::Relaxed) {
+                return Err(anyhow!("SIGTERM"));
+            }
 
+            let res = client.get(instance.url).send().await?;
+            if sigterm.load(Ordering::Relaxed) {
+                return Err(anyhow!("SIGTERM"));
+            }
+
+            let body = res.bytes().await?;
+            if sigterm.load(Ordering::Relaxed) {
+                return Err(anyhow!("SIGTERM"));
+            }
+
+            drop(permit);
             let feed = parser::parse(body.as_ref())?;
             let publisher = feed.title.map_or_else(|| server.clone(), |t| t.content);
             let mut tasks = Vec::new();
@@ -103,7 +131,12 @@ async fn run() -> Result<()> {
                 let library_path = library_path.clone();
                 let save_path = save_path.clone();
                 let publisher = publisher.clone();
+                let sigterm = Arc::clone(&sigterm);
                 let task = tokio::spawn(async move {
+                    if sigterm.load(Ordering::Relaxed) {
+                        return Err(anyhow!("SIGTERM"));
+                    }
+
                     let mut builder = EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?)
                         .map_err(|e| anyhow!(e))?;
 
