@@ -166,7 +166,7 @@ async fn run() -> Result<()> {
                     let mut hasher = Sha224::new();
                     hasher.update(&entry.id);
                     filename.push(format!("{:x}.epub", hasher.finalize()));
-                    let filename = save_path.join(&filename.join("-"));
+                    let filename = save_path.join(&filename.join("_"));
                     if filename.exists() {
                         return Ok(());
                     }
