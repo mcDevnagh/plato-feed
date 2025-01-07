@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{anyhow, Context, Result};
 use args::Args;
 use feed::{load_feed, program_name};
 use futures::future::join_all;
@@ -66,6 +66,7 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
         let client = Arc::clone(&client);
+        let instance = Arc::new(instance);
         let library_path = Arc::clone(&library_path);
         let save_path = if settings.use_server_name_directories {
             Arc::new(save_path.join(&server))

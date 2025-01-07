@@ -8,11 +8,14 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use chrono::Local;
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
-use feed_rs::parser;
+use feed_rs::{
+    model::{Content, Link},
+    parser,
+};
 use lazy_static::lazy_static;
 use mime_guess::{get_mime_extensions, Mime, MimeGuess};
 use regex::Regex;
@@ -40,7 +43,7 @@ pub fn program_name() -> String {
 
 pub async fn load_feed(
     server: Arc<String>,
-    instance: Instance,
+    instance: Arc<Instance>,
     client: Arc<Client>,
     library_path: Arc<PathBuf>,
     save_path: Arc<PathBuf>,
@@ -84,6 +87,7 @@ pub async fn load_feed(
             publisher: Arc::clone(&publisher),
             save_path: Arc::clone(&save_path),
             semaphore: Arc::clone(&semaphore),
+            server_instance: Arc::clone(&instance),
             sigterm: Arc::clone(&sigterm),
         }));
         tasks.push(task);
@@ -101,6 +105,7 @@ struct Entry {
     publisher: Arc<String>,
     save_path: Arc<PathBuf>,
     semaphore: Arc<Semaphore>,
+    server_instance: Arc<Instance>,
     sigterm: Arc<AtomicBool>,
 }
 
@@ -145,10 +150,25 @@ async fn load_entry(entry: Entry) -> Result<()> {
 
     let path = filename.strip_prefix(entry.library_path.as_ref())?;
 
-    if let Some(content) = entry.entry.content {
-        if let Some(mut body) = content.body {
-            let href = if content.content_type.subty() == "html" {
-                body = clean_html(
+    let content = if Some(true) == entry.server_instance.download_full_article {
+        download_full_article(
+            entry.entry.links,
+            &mut builder,
+            entry.client,
+            entry.semaphore,
+            entry.sigterm,
+        )
+        .await
+        .with_context(|| format!("{} of {}", entry.entry.id, entry.publisher.as_ref()))?
+    } else {
+        match entry.entry.content {
+            Some(Content {
+                body: Some(body),
+                content_type: _,
+                length: _,
+                src: _,
+            }) => {
+                clean_html(
                     body,
                     &mut builder,
                     &entry.base,
@@ -156,17 +176,32 @@ async fn load_entry(entry: Entry) -> Result<()> {
                     entry.semaphore,
                     entry.sigterm,
                 )
-                .await;
-                "article.html"
-            } else {
-                "article.txt"
-            };
-
-            builder
-                .add_content(EpubContent::new(href, body.as_bytes()))
-                .map_err(|e| anyhow!(e))?;
+                .await
+            }
+            _ => {
+                if Some(false) == entry.server_instance.download_full_article {
+                    return Err(anyhow!(
+                        "No content for {} of {}",
+                        entry.entry.id,
+                        entry.publisher.as_ref()
+                    ));
+                }
+                download_full_article(
+                    entry.entry.links,
+                    &mut builder,
+                    entry.client,
+                    entry.semaphore,
+                    entry.sigterm,
+                )
+                .await
+                .with_context(|| format!("{} of {}", entry.entry.id, entry.publisher.as_ref()))?
+            }
         }
-    }
+    };
+
+    builder
+        .add_content(EpubContent::new("article.html", content.as_bytes()))
+        .map_err(|e| anyhow!(e))?;
 
     if let Some(content) = entry.entry.summary {
         builder.add_description(content.content);
@@ -194,6 +229,47 @@ async fn load_entry(entry: Entry) -> Result<()> {
     Ok(())
 }
 
+async fn download_full_article(
+    links: Vec<Link>,
+    builder: &mut EpubBuilder<ZipLibrary>,
+    client: Arc<Client>,
+    semaphore: Arc<Semaphore>,
+    sigterm: Arc<AtomicBool>,
+) -> Result<String> {
+    let link = links
+        .iter()
+        .find(|l| {
+            l.media_type
+                .as_ref()
+                .map(|mt| mt.contains("html"))
+                .is_some()
+        })
+        .or_else(|| links.iter().find(|l| l.media_type.is_none()))
+        .or_else(|| links.first())
+        .ok_or_else(|| anyhow!("No link to download"))?;
+
+    let _ = semaphore.acquire().await?;
+    if sigterm.load(Ordering::Relaxed) {
+        return Err(anyhow!("SIGTERM"));
+    }
+
+    let res = client.get(link.href.as_str()).send().await?;
+    if sigterm.load(Ordering::Relaxed) {
+        return Err(anyhow!("SIGTERM"));
+    }
+
+    let html = clean_html(
+        String::from_utf8(res.bytes().await?.to_vec())?,
+        builder,
+        &Some(link.href.clone()),
+        client,
+        semaphore,
+        sigterm,
+    )
+    .await;
+    Ok(html)
+}
+
 async fn clean_html(
     html: String,
     builder: &mut EpubBuilder<ZipLibrary>,
@@ -210,13 +286,12 @@ async fn clean_html(
             let url = c
                 .get(2)
                 .ok_or(anyhow!("Failed to match src"))
-                .and_then(|s| Ok(Url::parse(s.as_str())?))
-                .and_then(|mut u| {
-                    if u.has_host() {
+                .and_then(|u| {
+                    if let Ok(u) = Url::parse(u.as_str()) {
                         Ok(u)
                     } else if let Some(base_url) = base_url.clone() {
-                        u.set_host(Some(&base_url))?;
-                        Ok(u)
+                        let base_url = Url::parse(&base_url)?;
+                        Ok(base_url.join(u.as_str())?)
                     } else {
                         Err(anyhow!("no host"))
                     }

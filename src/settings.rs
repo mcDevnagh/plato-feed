@@ -9,13 +9,13 @@ const SETTINGS_PATH: &str = "Settings.toml";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct Settings {
-    /// Mapping of server names to their respective [Instance] settings.
-    pub servers: HashMap<String, Instance>,
     /// Number of concurrent HTTP Requests to make
     pub concurrent_requests: usize,
     /// Whether files should be placed in a directory named after the server they have been pulled
     /// from.
     pub use_server_name_directories: bool,
+    /// Mapping of server names to their respective [Instance] settings.
+    pub servers: HashMap<String, Instance>,
 }
 
 impl Settings {
@@ -31,9 +31,9 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            servers: HashMap::new(),
             concurrent_requests: 5,
             use_server_name_directories: true,
+            servers: HashMap::new(),
         }
     }
 }
@@ -44,4 +44,9 @@ impl Default for Settings {
 pub struct Instance {
     /// A URL string pointing to an RSS/Atom feed.
     pub url: String,
+    /// Whether to download the full article, or just use the content provided in the feed.
+    /// - `None` specifies to download the full article if the feed does not provide any content.
+    /// - `Some(false)` specifies to never download the full article.
+    /// - `Some(true)` specifies to always download the full article.
+    pub download_full_article: Option<bool>,
 }

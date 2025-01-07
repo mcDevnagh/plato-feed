@@ -1,9 +1,15 @@
-# Whether files should be placed in a directory named after the server they have been pulled from.
-use-server-name-directories = true
-
 # Number of concurrent HTTP Requests to make
 concurrent-requests = 5
 
+# Whether files should be placed in a directory named after the server they have been pulled from.
+use-server-name-directories = true
+
 # A list of server names mapped to a URL containing a valid RSS/Atom feed
 [servers]
-"Plato Releases" = { url = "https://github.com/baskerville/plato/releases.atom" }
+[servers."Plato Releases"]
+url = "https://github.com/baskerville/plato/releases.atom"
+# Whether to download the full article, or just use the content provided in the feed.
+# Omit this setting to download the full article, if the feed does not provide any content.
+# false specifies to never download the full article.
+# true specifies to always download the full article.
+#download-full-article = true

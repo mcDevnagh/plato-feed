@@ -37,7 +37,6 @@ cargo build --release --target=arm-unknown-linux-gnueabihf
 
 # TODO
 - [ ] add cover image
-- [ ] fetch full article
 
 # Acknowledgements
 This hook is based on the work done for the following hooks.
