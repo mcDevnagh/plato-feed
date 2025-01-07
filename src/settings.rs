@@ -25,7 +25,6 @@ impl Settings {
 
         toml::from_str(&s)
             .with_context(|| format!("can't parse TOML content from {}", SETTINGS_PATH))
-            .map_err(Into::into)
     }
 }
 
