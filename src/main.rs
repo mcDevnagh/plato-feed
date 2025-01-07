@@ -5,6 +5,7 @@ mod settings;
 
 use std::{
     cmp::min,
+    fs,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -17,7 +18,7 @@ use feed::{load_feed, program_name};
 use futures::future::join_all;
 use reqwest::Client;
 use settings::Settings;
-use tokio::{fs, sync::Semaphore};
+use tokio::sync::Semaphore;
 
 async fn run(args: Args, settings: Settings) -> Result<()> {
     if !args.online {
@@ -32,7 +33,7 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
     }
 
     if !args.save_path.exists() {
-        fs::create_dir(&args.save_path).await?;
+        fs::create_dir(&args.save_path)?;
     }
 
     let sigterm = Arc::new(AtomicBool::new(false));
@@ -40,41 +41,16 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
 
     // Create directory for each instance name in the save path.
     if settings.use_server_name_directories {
-        let mut tasks = Vec::with_capacity(settings.servers.len());
         for name in settings.servers.keys() {
             let instance_path = args.save_path.join(name);
             let sigterm = Arc::clone(&sigterm);
-            let task = tokio::spawn(async move {
-                if sigterm.load(Ordering::Relaxed) {
-                    return Err(anyhow!("SIGTERM"));
-                }
+            if sigterm.load(Ordering::Relaxed) {
+                return Err(anyhow!("SIGTERM"));
+            }
 
-                if !instance_path.exists() {
-                    fs::create_dir(&instance_path).await?;
-                }
-
-                Ok::<(), Error>(())
-            });
-            tasks.push(task);
-        }
-
-        let err: Vec<Error> = join_all(tasks)
-            .await
-            .into_iter()
-            .filter_map(|t| {
-                match t {
-                    Ok(ok) => ok,
-                    Err(err) => Err(anyhow!(err)),
-                }
-                .err()
-            })
-            .collect();
-
-        if !err.is_empty() {
-            return Err(anyhow!(
-                "Failed to create server name directories: {:?}",
-                err
-            ));
+            if !instance_path.exists() {
+                fs::create_dir(&instance_path)?;
+            }
         }
     }
 
@@ -137,7 +113,7 @@ async fn main() -> Result<()> {
     let settings = Settings::load().with_context(|| "failed to load settings")?;
     if let Err(err) = run(args, settings).await {
         eprintln!("Error: {:#}", err);
-        fs::write("feed_error.txt", format!("{:#}", err)).await.ok();
+        fs::write("feed_error.txt", format!("{:#}", err)).ok();
         return Err(err);
     }
 
