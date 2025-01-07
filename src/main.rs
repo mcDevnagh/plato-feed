@@ -1,6 +1,7 @@
 mod args;
 mod client;
 mod feed;
+mod html;
 mod plato;
 mod settings;
 
