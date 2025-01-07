@@ -1,12 +1,4 @@
-use std::{
-    env,
-    path::PathBuf,
-    str::FromStr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{env, path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -19,14 +11,13 @@ use feed_rs::{
 use lazy_static::lazy_static;
 use mime_guess::{get_mime_extensions, Mime, MimeGuess};
 use regex::Regex;
-use reqwest::{header::CONTENT_TYPE, Client};
 use serde_json::json;
 use sha2::{Digest, Sha224};
 use slugify::slugify;
-use tokio::{sync::Semaphore, task::JoinHandle};
+use tokio::task::JoinHandle;
 use url::Url;
 
-use crate::settings::Instance;
+use crate::{client::Client, settings::Instance};
 
 lazy_static! {
     static ref CLEAR_REGEX: Regex =
@@ -44,33 +35,16 @@ pub fn program_name() -> String {
 pub async fn load_feed(
     server: Arc<String>,
     instance: Arc<Instance>,
-    client: Arc<Client>,
+    client: Client,
     library_path: Arc<PathBuf>,
     save_path: Arc<PathBuf>,
-    semaphore: Arc<Semaphore>,
-    sigterm: Arc<AtomicBool>,
 ) -> Result<Vec<JoinHandle<Result<()>>>> {
-    let permit = semaphore.acquire().await?;
-    if sigterm.load(Ordering::Relaxed) {
-        return Err(anyhow!("SIGTERM"));
-    }
-
-    let res = client.get(&instance.url).send().await?;
-    if sigterm.load(Ordering::Relaxed) {
-        return Err(anyhow!("SIGTERM"));
-    }
-
-    let body = res.bytes().await?;
-    if sigterm.load(Ordering::Relaxed) {
-        return Err(anyhow!("SIGTERM"));
-    }
-
-    drop(permit);
+    let res = client.get(&instance.url).await?;
     let base = Url::parse(&instance.url).ok().and_then(|u| match u.host() {
         Some(url::Host::Domain(host)) => Some(host.to_owned()),
         _ => None,
     });
-    let feed = parser::parse(body.as_ref())?;
+    let feed = parser::parse(res.body.as_ref())?;
     let publisher = if let Some(title) = feed.title {
         Arc::new(title.content)
     } else {
@@ -79,17 +53,15 @@ pub async fn load_feed(
 
     let mut tasks = Vec::new();
     for entry in feed.entries {
-        let task = tokio::spawn(load_entry(Entry {
+        let task = tokio::spawn(load_entry(
             entry,
-            base: base.clone(),
-            client: Arc::clone(&client),
-            library_path: Arc::clone(&library_path),
-            publisher: Arc::clone(&publisher),
-            save_path: Arc::clone(&save_path),
-            semaphore: Arc::clone(&semaphore),
-            server_instance: Arc::clone(&instance),
-            sigterm: Arc::clone(&sigterm),
-        }));
+            base.clone(),
+            client.clone(),
+            Arc::clone(&library_path),
+            Arc::clone(&publisher),
+            Arc::clone(&save_path),
+            Arc::clone(&instance),
+        ));
         tasks.push(task);
     }
 
@@ -97,33 +69,25 @@ pub async fn load_feed(
     res
 }
 
-struct Entry {
+async fn load_entry(
     entry: feed_rs::model::Entry,
     base: Option<String>,
-    client: Arc<Client>,
+    client: Client,
     library_path: Arc<PathBuf>,
     publisher: Arc<String>,
     save_path: Arc<PathBuf>,
-    semaphore: Arc<Semaphore>,
     server_instance: Arc<Instance>,
-    sigterm: Arc<AtomicBool>,
-}
-
-async fn load_entry(entry: Entry) -> Result<()> {
-    if entry.sigterm.load(Ordering::Relaxed) {
-        return Err(anyhow!("SIGTERM"));
-    }
-
+) -> Result<()> {
     let mut builder: EpubBuilder<ZipLibrary> =
         EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?).map_err(|e| anyhow!(e))?;
 
-    let authors: Vec<String> = entry.entry.authors.into_iter().map(|a| a.name).collect();
+    let authors: Vec<String> = entry.authors.into_iter().map(|a| a.name).collect();
     let author = authors.join(", ");
     builder.set_authors(authors);
     builder.set_generator(program_name());
 
     let mut filename = Vec::new();
-    let year = if let Some(date) = entry.entry.published {
+    let year = if let Some(date) = entry.published {
         filename.push(date.format("%Y-%m-%dT%H:%M:%S").to_string());
         let year = date.format("%Y").to_string();
         builder.set_publication_date(date);
@@ -132,69 +96,47 @@ async fn load_entry(entry: Entry) -> Result<()> {
         String::default()
     };
 
-    let title = if let Some(title) = entry.entry.title {
+    let title = if let Some(title) = entry.title {
         filename.push(slugify!(&title.content, max_length = 32));
         builder.set_title(&title.content);
         title.content
     } else {
-        entry.entry.id.clone()
+        entry.id.clone()
     };
 
     let mut hasher = Sha224::new();
-    hasher.update(&entry.entry.id);
+    hasher.update(&entry.id);
     filename.push(format!("{:x}.epub", hasher.finalize()));
-    let filename = entry.save_path.join(filename.join("_"));
+    let filename = save_path.join(filename.join("_"));
     if filename.exists() {
         return Ok(());
     }
 
-    let path = filename.strip_prefix(entry.library_path.as_ref())?;
+    let path = filename.strip_prefix(library_path.as_ref())?;
 
-    let content = if Some(true) == entry.server_instance.download_full_article {
-        download_full_article(
-            entry.entry.links,
-            &mut builder,
-            entry.client,
-            entry.semaphore,
-            entry.sigterm,
-        )
-        .await
-        .with_context(|| format!("{} of {}", entry.entry.id, entry.publisher.as_ref()))?
+    let content = if Some(true) == server_instance.download_full_article {
+        download_full_article(entry.links, &mut builder, client)
+            .await
+            .with_context(|| format!("{} of {}", entry.id, publisher.as_ref()))?
     } else {
-        match entry.entry.content {
+        match entry.content {
             Some(Content {
                 body: Some(body),
                 content_type: _,
                 length: _,
                 src: _,
-            }) => {
-                clean_html(
-                    body,
-                    &mut builder,
-                    &entry.base,
-                    entry.client,
-                    entry.semaphore,
-                    entry.sigterm,
-                )
-                .await
-            }
+            }) => clean_html(body, &mut builder, &base, client).await,
             _ => {
-                if Some(false) == entry.server_instance.download_full_article {
+                if Some(false) == server_instance.download_full_article {
                     return Err(anyhow!(
                         "No content for {} of {}",
-                        entry.entry.id,
-                        entry.publisher.as_ref()
+                        entry.id,
+                        publisher.as_ref()
                     ));
                 }
-                download_full_article(
-                    entry.entry.links,
-                    &mut builder,
-                    entry.client,
-                    entry.semaphore,
-                    entry.sigterm,
-                )
-                .await
-                .with_context(|| format!("{} of {}", entry.entry.id, entry.publisher.as_ref()))?
+                download_full_article(entry.links, &mut builder, client)
+                    .await
+                    .with_context(|| format!("{} of {}", entry.id, publisher.as_ref()))?
             }
         }
     };
@@ -203,7 +145,7 @@ async fn load_entry(entry: Entry) -> Result<()> {
         .add_content(EpubContent::new("article.html", content.as_bytes()))
         .map_err(|e| anyhow!(e))?;
 
-    if let Some(content) = entry.entry.summary {
+    if let Some(content) = entry.summary {
         builder.add_description(content.content);
     }
 
@@ -215,8 +157,8 @@ async fn load_entry(entry: Entry) -> Result<()> {
             "title": title,
             "author": author,
             "year": year,
-            "publisher": entry.publisher.as_ref(),
-            "identifier": entry.entry.id,
+            "publisher": publisher.as_ref(),
+            "identifier": entry.id,
             "added": Local::now().naive_local(),
             "file": {
                 "path": path,
@@ -232,9 +174,7 @@ async fn load_entry(entry: Entry) -> Result<()> {
 async fn download_full_article(
     links: Vec<Link>,
     builder: &mut EpubBuilder<ZipLibrary>,
-    client: Arc<Client>,
-    semaphore: Arc<Semaphore>,
-    sigterm: Arc<AtomicBool>,
+    client: Client,
 ) -> Result<String> {
     let link = links
         .iter()
@@ -248,23 +188,12 @@ async fn download_full_article(
         .or_else(|| links.first())
         .ok_or_else(|| anyhow!("No link to download"))?;
 
-    let _ = semaphore.acquire().await?;
-    if sigterm.load(Ordering::Relaxed) {
-        return Err(anyhow!("SIGTERM"));
-    }
-
-    let res = client.get(link.href.as_str()).send().await?;
-    if sigterm.load(Ordering::Relaxed) {
-        return Err(anyhow!("SIGTERM"));
-    }
-
+    let res = client.get(link.href.as_str()).await?;
     let html = clean_html(
-        String::from_utf8(res.bytes().await?.to_vec())?,
+        String::from_utf8(res.body.to_vec())?,
         builder,
         &Some(link.href.clone()),
         client,
-        semaphore,
-        sigterm,
     )
     .await;
     Ok(html)
@@ -274,9 +203,7 @@ async fn clean_html(
     html: String,
     builder: &mut EpubBuilder<ZipLibrary>,
     base_url: &Option<String>,
-    client: Arc<Client>,
-    semaphore: Arc<Semaphore>,
-    sigterm: Arc<AtomicBool>,
+    client: Client,
 ) -> String {
     let mut html = CLEAR_REGEX.replace_all(&html, "").to_string();
     let tasks = IMG_REGEX
@@ -296,10 +223,7 @@ async fn clean_html(
                         Err(anyhow!("no host"))
                     }
                 });
-            let client = Arc::clone(&client);
-            let semaphore = Arc::clone(&semaphore);
-            let sigterm = Arc::clone(&sigterm);
-            let task = tokio::spawn(load_img(url, client, semaphore, sigterm));
+            let task = tokio::spawn(load_img(url, client.clone()));
             (img, task)
         })
         .collect::<Vec<(String, JoinHandle<Result<Img>>)>>();
@@ -340,12 +264,7 @@ struct Img {
     ext: Option<String>,
 }
 
-async fn load_img(
-    url: Result<Url>,
-    client: Arc<Client>,
-    semaphore: Arc<Semaphore>,
-    sigterm: Arc<AtomicBool>,
-) -> Result<Img> {
+async fn load_img(url: Result<Url>, client: Client) -> Result<Img> {
     match url {
         Err(err) => Err(err),
         Ok(url) => {
@@ -354,34 +273,21 @@ async fn load_img(
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str().to_owned());
 
-            let permit = semaphore.acquire().await?;
-            if sigterm.load(Ordering::Relaxed) {
-                return Err(anyhow!("SIGTERM"));
-            }
-
-            let res = client.get(url).send().await?;
-            if sigterm.load(Ordering::Relaxed) {
-                return Err(anyhow!("SIGTERM"));
-            }
-
+            let res = client.get(url).await?;
             let mime = res
-                .headers()
-                .get(CONTENT_TYPE)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|mt| Mime::from_str(mt).ok())
+                .content_type
+                .and_then(|h| Mime::from_str(h.to_str().ok()?).ok())
                 .or_else(|| {
                     ext.clone()
                         .and_then(|ext| MimeGuess::from_ext(&ext).first())
                 })
                 .ok_or(anyhow!("Failed to get mimetype"))?;
 
-            let bytes = res.bytes().await?;
-            drop(permit);
-            if sigterm.load(Ordering::Relaxed) {
-                return Err(anyhow!("SIGTERM"));
-            }
-
-            Ok(Img { bytes, mime, ext })
+            Ok(Img {
+                bytes: res.body,
+                mime,
+                ext,
+            })
         }
     }
 }

@@ -1,24 +1,17 @@
 mod args;
+mod client;
 mod feed;
 mod plato;
 mod settings;
 
-use std::{
-    cmp::min,
-    fs,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{fs, sync::Arc};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use args::Args;
+use client::Client;
 use feed::{load_feed, program_name};
 use futures::future::join_all;
-use reqwest::Client;
 use settings::Settings;
-use tokio::sync::Semaphore;
 
 async fn run(args: Args, settings: Settings) -> Result<()> {
     if !args.online {
@@ -36,36 +29,22 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
         fs::create_dir(&args.save_path)?;
     }
 
-    let sigterm = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&sigterm))?;
-
     // Create directory for each instance name in the save path.
     if settings.use_server_name_directories {
         for name in settings.servers.keys() {
             let instance_path = args.save_path.join(name);
-            let sigterm = Arc::clone(&sigterm);
-            if sigterm.load(Ordering::Relaxed) {
-                return Err(anyhow!("SIGTERM"));
-            }
-
             if !instance_path.exists() {
                 fs::create_dir(&instance_path)?;
             }
         }
     }
 
-    let client = Client::builder().user_agent(program_name()).build()?;
-    let client = Arc::new(client);
-
+    let client = Client::new(program_name(), settings.concurrent_requests)?;
     let library_path = Arc::new(args.library_path);
     let save_path = Arc::new(args.save_path);
 
-    let semaphore = Semaphore::new(min(settings.concurrent_requests, Semaphore::MAX_PERMITS));
-    let semaphore = Arc::new(semaphore);
-
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
-        let client = Arc::clone(&client);
         let instance = Arc::new(instance);
         let library_path = Arc::clone(&library_path);
         let save_path = if settings.use_server_name_directories {
@@ -73,17 +52,13 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
         } else {
             Arc::clone(&save_path)
         };
-        let semaphore = Arc::clone(&semaphore);
         let server = Arc::new(server);
-        let sigterm = Arc::clone(&sigterm);
         let task = tokio::spawn(load_feed(
             server,
             instance,
-            client,
+            client.clone(),
             library_path,
             save_path,
-            semaphore,
-            sigterm,
         ));
         tasks.push(task);
     }
