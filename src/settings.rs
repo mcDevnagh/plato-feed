@@ -44,9 +44,61 @@ impl Default for Settings {
 pub struct Instance {
     /// A URL string pointing to an RSS/Atom feed.
     pub url: String,
+
     /// Whether to download the full article, or just use the content provided in the feed.
     /// - `None` specifies to download the full article if the feed does not provide any content.
     /// - `Some(false)` specifies to never download the full article.
     /// - `Some(true)` specifies to always download the full article.
     pub download_full_article: Option<bool>,
+
+    /// Whether to filter a full article down to a single element. This does
+    /// not apply if [Instance::download_full_article] is `Some(false)`
+    ///
+    /// Example:
+    /// ```html
+    /// <!DOCTYPE html>
+    /// <html lang="en">
+    ///     <head></head>
+    ///     <body>
+    ///         <nav></nav>
+    ///         <main>Main Content!</main>
+    ///         <div id="footer"></footer>
+    ///     </body>
+    /// </html>
+    /// ```
+    /// becomes
+    /// ```html
+    /// <main>Main Content!</main>
+    /// ```
+    pub enable_filter: bool,
+
+    /// A [CSS selector](https://www.w3schools.com/cssref/css_selectors.php)
+    /// to filter down a full article to a single element.
+    /// The default list of common selectors is used as fallback.
+    /// Omit to only use the default list.
+    /// This does not apply if [Instance::enable_filter] is `false`
+    /// Example:
+    /// ```toml
+    /// filter-element = "#custom-article"
+    /// ```
+    /// turns
+    /// ```html
+    /// <!DOCTYPE html>
+    /// <html lang="en">
+    ///     <head></head>
+    ///     <body>
+    ///         <nav></nav>
+    ///         <main>
+    ///             <div id="#custom-article">Included!</div>
+    ///             <div>Not included!</div>
+    ///         </main>
+    ///         <div id="footer"></footer>
+    ///     </body>
+    /// </html>
+    /// ```
+    /// becomes
+    /// ```html
+    /// <div id="#custom-article">Included!</div>
+    /// ```
+    pub filter_element: Option<String>,
 }

@@ -103,7 +103,7 @@ async fn load_entry(
     let path = filename.strip_prefix(library_path.as_ref())?;
 
     let content = if Some(true) == server_instance.download_full_article {
-        download_full_article(entry.links, &mut builder, client)
+        download_full_article(entry.links, &mut builder, client, server_instance)
             .await
             .with_context(|| format!("{} of {}", entry.id, publisher.as_ref()))?
     } else {
@@ -113,7 +113,7 @@ async fn load_entry(
                 content_type: _,
                 length: _,
                 src: _,
-            }) => clean_html(body, &mut builder, &base, client).await,
+            }) => clean_html(body, &mut builder, &base, client, false, &None).await,
             _ => {
                 if Some(false) == server_instance.download_full_article {
                     return Err(anyhow!(
@@ -122,7 +122,7 @@ async fn load_entry(
                         publisher.as_ref()
                     ));
                 }
-                download_full_article(entry.links, &mut builder, client)
+                download_full_article(entry.links, &mut builder, client, server_instance)
                     .await
                     .with_context(|| format!("{} of {}", entry.id, publisher.as_ref()))?
             }
@@ -163,6 +163,7 @@ async fn download_full_article(
     links: Vec<Link>,
     builder: &mut EpubBuilder<ZipLibrary>,
     client: Client,
+    server_instance: Arc<Instance>,
 ) -> Result<Bytes> {
     let link = links
         .iter()
@@ -182,6 +183,8 @@ async fn download_full_article(
         builder,
         &Some(link.href.clone()),
         client,
+        server_instance.enable_filter,
+        &server_instance.filter_element,
     )
     .await;
     Ok(html)

@@ -7,7 +7,7 @@ use futures::future::join_all;
 use lazy_static::lazy_static;
 use mime_guess::{get_mime_extensions, Mime, MimeGuess};
 use regex::{Captures, Regex};
-use scraper::{Html, Selector};
+use scraper::{selectable::Selectable, Html, Selector};
 use url::Url;
 
 use crate::client::Client;
@@ -18,6 +18,51 @@ lazy_static! {
     static ref IMG_REGEX: Regex =
         Regex::new(r#"<\s*img [^>]*(src\s*=\s*"([^"]*)")[^>]*>"#).unwrap();
     static ref EXT_REGEX: Regex = Regex::new(r"\.(\S{2,5})$").unwrap();
+    static ref FILTER_ELEMENTS: Vec<Selector> = {
+        vec![
+            Selector::parse("article").unwrap(),
+            Selector::parse("main").unwrap(),
+            Selector::parse("div#main").unwrap(),
+            Selector::parse("#main-article").unwrap(),
+            Selector::parse(".main-content").unwrap(),
+            Selector::parse("#body").unwrap(),
+            Selector::parse("#content").unwrap(),
+            Selector::parse(".content").unwrap(),
+            Selector::parse("div#article").unwrap(),
+            Selector::parse("div.article").unwrap(),
+            Selector::parse("div.post").unwrap(),
+            Selector::parse("div.post-outer").unwrap(),
+            Selector::parse(".l-root").unwrap(),
+            Selector::parse(".content-container").unwrap(),
+            Selector::parse(".StandardArticleBody_body").unwrap(),
+            Selector::parse("div#article-inner").unwrap(),
+            Selector::parse("div#newsstorytext").unwrap(),
+            Selector::parse("div.general").unwrap(),
+        ]
+    };
+}
+
+fn get_urls<'a, T: Selectable<'a>>(doc: T, base_url: &Option<String>) -> Vec<Url> {
+    doc.select(&IMG_SELECTOR)
+        .map(|elem| {
+            elem.attr("src")
+                .ok_or(anyhow!("Failed to match src"))
+                .and_then(|url| {
+                    if let Ok(url) = Url::parse(url) {
+                        Ok(url)
+                    } else if let Some(base_url) = base_url.clone() {
+                        let base_url = Url::parse(&base_url)?;
+                        Ok(base_url.join(url)?)
+                    } else {
+                        Err(anyhow!("no host"))
+                    }
+                })
+                .map_err(|err| {
+                    eprintln!("{err}");
+                })
+        })
+        .filter_map(|res| res.ok())
+        .collect::<Vec<_>>()
 }
 
 pub async fn clean_html(
@@ -25,35 +70,14 @@ pub async fn clean_html(
     builder: &mut EpubBuilder<ZipLibrary>,
     base_url: &Option<String>,
     client: Client,
+    enable_filter: bool,
+    filter_element: &Option<String>,
 ) -> Bytes {
     let urls = {
         let mut doc = Html::parse_document(&html);
-        let mut elements_to_clear = doc
+        let elements_to_clear = doc
             .select(&CLEAR_SELECTOR)
             .map(|e| e.id())
-            .collect::<Vec<_>>();
-
-        let urls = doc
-            .select(&IMG_SELECTOR)
-            .map(|elem| {
-                elem.attr("src")
-                    .ok_or(anyhow!("Failed to match src"))
-                    .and_then(|url| {
-                        if let Ok(url) = Url::parse(url) {
-                            Ok(url)
-                        } else if let Some(base_url) = base_url.clone() {
-                            let base_url = Url::parse(&base_url)?;
-                            Ok(base_url.join(url)?)
-                        } else {
-                            Err(anyhow!("no host"))
-                        }
-                    })
-                    .map_err(|err| {
-                        eprintln!("{err}");
-                        elements_to_clear.push(elem.id());
-                    })
-            })
-            .filter_map(|res| res.ok())
             .collect::<Vec<_>>();
 
         for id in elements_to_clear {
@@ -62,8 +86,26 @@ pub async fn clean_html(
             }
         }
 
-        html = doc.html();
-        urls
+        let mut urls = None;
+        if enable_filter {
+            for filter in filter_element
+                .as_ref()
+                .and_then(|e| Selector::parse(e).ok())
+                .iter()
+                .chain(FILTER_ELEMENTS.iter())
+            {
+                if let Some(elem) = doc.select(filter).next() {
+                    urls = Some(get_urls(&doc, base_url));
+                    html = elem.html();
+                    break;
+                }
+            }
+        }
+
+        urls.unwrap_or_else(|| {
+            html = doc.html();
+            get_urls(&doc, base_url)
+        })
     };
 
     let tasks = urls

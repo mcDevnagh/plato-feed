@@ -8,8 +8,37 @@ use-server-name-directories = true
 [servers]
 [servers."Plato Releases"]
 url = "https://github.com/baskerville/plato/releases.atom"
+
 # Whether to download the full article, or just use the content provided in the feed.
 # Omit this setting to download the full article, if the feed does not provide any content.
 # false specifies to never download the full article.
 # true specifies to always download the full article.
 #download-full-article = true
+
+# Whether to filter a full article down to a single element.
+# This does not apply if download-full-article is false
+#
+# Example:
+# ```html
+# <!DOCTYPE html>
+# <html lang="en">
+#     <head></head>
+#     <body>
+#         <nav></nav>
+#         <main>Main Content!</main>
+#         <div id="footer"></footer>
+#     </body>
+# </html>
+# ```
+# becomes
+# ```html
+# <main>Main Content!</main>
+# ```
+enable-filter = true
+
+# A [CSS selector](https://www.w3schools.com/cssref/css_selectors.php)
+# to filter down a full article to a single element.
+# The default list of common selectors is used as fallback.
+# Omit to only use the default list.
+# This does not apply if enable-filter is false.
+#filter-element = ""
