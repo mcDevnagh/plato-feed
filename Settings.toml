@@ -9,6 +9,10 @@ use-server-name-directories = true
 [servers."Plato Releases"]
 url = "https://github.com/baskerville/plato/releases.atom"
 
+# Whether to download any images on the page and include them in the epub.
+# The default is true
+include-images = false
+
 # Whether to download the full article, or just use the content provided in the feed.
 # Omit this setting to download the full article, if the feed does not provide any content.
 # false specifies to never download the full article.

@@ -113,7 +113,18 @@ async fn load_entry(
                 content_type: _,
                 length: _,
                 src: _,
-            }) => clean_html(body, &mut builder, &base, client, false, &None).await,
+            }) => {
+                clean_html(
+                    body,
+                    &mut builder,
+                    &base,
+                    client,
+                    server_instance.include_images,
+                    false,
+                    &None,
+                )
+                .await
+            }
             _ => {
                 if Some(false) == server_instance.download_full_article {
                     return Err(anyhow!(
@@ -183,6 +194,7 @@ async fn download_full_article(
         builder,
         &Some(link.href.clone()),
         client,
+        server_instance.include_images,
         server_instance.enable_filter,
         &server_instance.filter_element,
     )

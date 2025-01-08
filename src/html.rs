@@ -70,6 +70,7 @@ pub async fn clean_html(
     builder: &mut EpubBuilder<ZipLibrary>,
     base_url: &Option<String>,
     client: Client,
+    include_images: bool,
     enable_filter: bool,
     filter_element: &Option<String>,
 ) -> Bytes {
@@ -95,7 +96,11 @@ pub async fn clean_html(
                 .chain(FILTER_ELEMENTS.iter())
             {
                 if let Some(elem) = doc.select(filter).next() {
-                    urls = Some(get_urls(&doc, base_url));
+                    urls = if include_images {
+                        Some(get_urls(elem, base_url))
+                    } else {
+                        Some(Vec::new())
+                    };
                     html = elem.html();
                     break;
                 }
@@ -104,7 +109,11 @@ pub async fn clean_html(
 
         urls.unwrap_or_else(|| {
             html = doc.html();
-            get_urls(&doc, base_url)
+            if include_images {
+                get_urls(&doc, base_url)
+            } else {
+                Vec::new()
+            }
         })
     };
 

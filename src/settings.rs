@@ -45,6 +45,10 @@ pub struct Instance {
     /// A URL string pointing to an RSS/Atom feed.
     pub url: String,
 
+    /// Whether to download any images on the page and include them in the epub.
+    /// The default is `true`
+    pub include_images: bool,
+
     /// Whether to download the full article, or just use the content provided in the feed.
     /// - `None` specifies to download the full article if the feed does not provide any content.
     /// - `Some(false)` specifies to never download the full article.
@@ -107,6 +111,7 @@ impl Default for Instance {
     fn default() -> Self {
         Self {
             url: String::default(),
+            include_images: true,
             download_full_article: None,
             enable_filter: true,
             filter_element: None,
