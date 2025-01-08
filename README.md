@@ -12,9 +12,9 @@ reader that syncs an e-reader with [RSS](https://en.wikipedia.org/wiki/RSS) and
 [[libraries.hooks]]
 path = "Feed"
 program = "bin/feed/plato-feed"
-sort-method = "added"
+sort-method = "file-name"
 first-column = "title-and-author"
-second-column = "progress"
+second-column = "year"
 ```
 4. Whenever the `Feed` folder is opened, this hook will check if there are any
 books that haven't been downloaded and will fetch them if need be.
@@ -39,7 +39,7 @@ cargo build --release --target=arm-unknown-linux-gnueabihf
 - [ ] add cover image
 
 # Acknowledgements
-This hook is based on the work done for the following hooks.
+This hook is based on the work done for the following projects.
 
 ## [Plato article fetcher](https://github.com/baskerville/plato/blob/master/crates/fetcher/src/main.rs)
 ```
