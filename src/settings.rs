@@ -39,7 +39,7 @@ impl Default for Settings {
 }
 
 /// Holds the settings for a single instance of a server.
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct Instance {
     /// A URL string pointing to an RSS/Atom feed.
@@ -101,4 +101,15 @@ pub struct Instance {
     /// <div id="#custom-article">Included!</div>
     /// ```
     pub filter_element: Option<String>,
+}
+
+impl Default for Instance {
+    fn default() -> Self {
+        Self {
+            url: String::default(),
+            download_full_article: None,
+            enable_filter: true,
+            filter_element: None,
+        }
+    }
 }

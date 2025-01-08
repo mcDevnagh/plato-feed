@@ -16,8 +16,7 @@ url = "https://github.com/baskerville/plato/releases.atom"
 #download-full-article = true
 
 # Whether to filter a full article down to a single element.
-# This does not apply if download-full-article is false
-#
+# This does not apply if download-full-article is false. The default is true.
 # Example:
 # ```html
 # <!DOCTYPE html>
