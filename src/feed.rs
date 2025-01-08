@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
-use chrono::Local;
+use chrono::{Local, Utc};
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use feed_rs::{
     model::{Content, Link},
@@ -75,14 +75,16 @@ async fn load_entry(
     builder.set_generator(program_name());
 
     let mut filename = Vec::new();
-    let year = if let Some(date) = entry.published {
-        filename.push(date.format("%Y-%m-%dT%H:%M:%S").to_string());
-        let year = date.format("%Y").to_string();
-        builder.set_publication_date(date);
-        year
+    let date = if let Some(date) = entry.published {
+        date
+    } else if let Some(date) = entry.updated {
+        date
     } else {
-        String::default()
+        Utc::now()
     };
+    builder.set_publication_date(date);
+    let date = date.format("%Y-%m-%dT%H:%M:%S").to_string();
+    filename.push(date.clone());
 
     let title = if let Some(title) = entry.title {
         filename.push(slugify!(&title.content, max_length = 32));
@@ -155,7 +157,7 @@ async fn load_entry(
         "info": {
             "title": title,
             "author": author,
-            "year": year,
+            "year": date,
             "publisher": publisher.as_ref(),
             "identifier": entry.id,
             "added": Local::now().naive_local(),
