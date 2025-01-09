@@ -24,7 +24,7 @@ The easiest way to build this project is to use
 [cross](https://github.com/cross-rs/cross)
 to cross-compile with Docker. Once setup it's as simple as running:
 ```shell
-cross build --release --target=arm-unknown-linux-gnueabihf
+cross build --release --target=arm-unknown-linux-musleabihf
 ```
 
 ### Building without Docker
