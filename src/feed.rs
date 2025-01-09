@@ -10,7 +10,6 @@ use feed_rs::{
 };
 use serde_json::json;
 use sha2::{Digest, Sha224};
-use slugify::slugify;
 use tokio::task::JoinHandle;
 use url::Url;
 
@@ -74,7 +73,6 @@ async fn load_entry(
     builder.set_authors(authors);
     builder.set_generator(program_name());
 
-    let mut filename = Vec::new();
     let date = if let Some(date) = entry.published {
         date
     } else if let Some(date) = entry.updated {
@@ -84,10 +82,8 @@ async fn load_entry(
     };
     builder.set_publication_date(date);
     let date = date.format("%Y-%m-%dT%H:%M:%S").to_string();
-    filename.push(date.clone());
 
     let title = if let Some(title) = entry.title {
-        filename.push(slugify!(&title.content, max_length = 32));
         builder.set_title(&title.content);
         title.content
     } else {
@@ -96,8 +92,8 @@ async fn load_entry(
 
     let mut hasher = Sha224::new();
     hasher.update(&entry.id);
-    filename.push(format!("{:x}.epub", hasher.finalize()));
-    let filename = save_path.join(filename.join("_"));
+    let filename = format!("{:x}.epub", hasher.finalize());
+    let filename = save_path.join(filename);
     if filename.exists() {
         return Ok(());
     }
