@@ -12,6 +12,7 @@ use args::Args;
 use client::Client;
 use feed::{load_feed, program_name};
 use futures::future::join_all;
+use plato::notify;
 use settings::Settings;
 
 async fn run(args: Args, settings: Settings) -> Result<()> {
@@ -35,7 +36,8 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
         for name in settings.servers.keys() {
             let instance_path = args.save_path.join(name);
             if !instance_path.exists() {
-                fs::create_dir(&instance_path)?;
+                fs::create_dir(&instance_path)
+                    .with_context(|| format!("creating server directory: {}", name))?;
             }
         }
     }
@@ -89,9 +91,8 @@ async fn main() -> Result<()> {
     let args = Args::new()?;
     let settings = Settings::load().with_context(|| "failed to load settings")?;
     if let Err(err) = run(args, settings).await {
-        eprintln!("Error: {:#}", err);
-        fs::write("feed_error.txt", format!("{:#}", err)).ok();
-        return Err(err);
+        notify(&format!("Error: {}", err));
+        return Err(err).with_context(|| "feed");
     }
 
     Ok(())
