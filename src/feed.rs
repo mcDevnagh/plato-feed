@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{fmt::Display, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
 use url::Url;
 
-use crate::{client::Client, html::clean_html, settings::Instance};
+use crate::{client::Client, html::clean_html, plato::notify, settings::Instance};
 
 pub fn program_name() -> String {
     format!("plato-feed/{}", env!("CARGO_PKG_VERSION"))
@@ -26,7 +26,7 @@ pub async fn load_feed(
     library_path: Arc<PathBuf>,
     save_path: Arc<PathBuf>,
 ) -> Result<Vec<JoinHandle<Result<()>>>> {
-    let res = client.get(&instance.url).await?;
+    let res = client.get(&server, &instance.url).await?;
     let base = Url::parse(&instance.url).ok().and_then(|u| match u.host() {
         Some(url::Host::Domain(host)) => Some(host.to_owned()),
         _ => None,
@@ -40,15 +40,27 @@ pub async fn load_feed(
 
     let mut tasks = Vec::new();
     for entry in feed.entries {
-        let task = tokio::spawn(load_entry(
-            entry,
-            base.clone(),
-            client.clone(),
-            Arc::clone(&library_path),
-            Arc::clone(&publisher),
-            Arc::clone(&save_path),
-            Arc::clone(&instance),
-        ));
+        let client = client.clone();
+        let base = base.clone();
+        let library_path = Arc::clone(&library_path);
+        let save_path = Arc::clone(&save_path);
+        let publisher = Arc::clone(&publisher);
+        let instance = Arc::clone(&instance);
+        let server = Arc::clone(&server);
+        let task = tokio::spawn(async move {
+            let id = entry.id.clone();
+            load_entry(
+                entry,
+                base,
+                client,
+                library_path,
+                publisher,
+                save_path,
+                instance,
+            )
+            .await
+            .with_context(|| format!("{} of {}", id, &server))
+        });
         tasks.push(task);
     }
 
@@ -115,9 +127,7 @@ async fn load_entry(
     let path = filename.strip_prefix(library_path.as_ref())?;
 
     let content = if Some(true) == server_instance.download_full_article {
-        download_full_article(entry.links, &mut builder, client, server_instance)
-            .await
-            .with_context(|| format!("{} of {}", entry.id, publisher.as_ref()))?
+        download_full_article(&title, entry.links, &mut builder, client, server_instance).await?
     } else {
         match entry.content {
             Some(Content {
@@ -145,9 +155,8 @@ async fn load_entry(
                         publisher.as_ref()
                     ));
                 }
-                download_full_article(entry.links, &mut builder, client, server_instance)
-                    .await
-                    .with_context(|| format!("{} of {}", entry.id, publisher.as_ref()))?
+                download_full_article(&title, entry.links, &mut builder, client, server_instance)
+                    .await?
             }
         }
     };
@@ -165,7 +174,7 @@ async fn load_entry(
     let event = json!({
         "type": "addDocument",
         "info": {
-            "title": title,
+            "title": &title,
             "author": author,
             "year": date,
             "publisher": publisher.as_ref(),
@@ -179,10 +188,12 @@ async fn load_entry(
         },
     });
     println!("{event}");
+    notify(&format!("Added {title}"));
     Ok(())
 }
 
-async fn download_full_article(
+async fn download_full_article<D: Display>(
+    title: D,
     links: Vec<Link>,
     builder: &mut EpubBuilder<ZipLibrary>,
     client: Client,
@@ -200,7 +211,7 @@ async fn download_full_article(
         .or_else(|| links.first())
         .ok_or_else(|| anyhow!("No link to download"))?;
 
-    let res = client.get(link.href.as_str()).await?;
+    let res = client.get(title, link.href.as_str()).await?;
     let html = clean_html(
         String::from_utf8(res.body.to_vec())?,
         builder,

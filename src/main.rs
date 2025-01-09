@@ -49,6 +49,7 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
         let instance = Arc::new(instance);
+        let client = client.clone();
         let library_path = Arc::clone(&library_path);
         let save_path = if settings.use_server_name_directories {
             Arc::new(save_path.join(&server))
@@ -56,32 +57,50 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
             Arc::clone(&save_path)
         };
         let server = Arc::new(server);
-        let task = tokio::spawn(load_feed(
-            server,
-            instance,
-            client.clone(),
-            library_path,
-            save_path,
-        ));
+        let task = tokio::spawn(async move {
+            load_feed(
+                Arc::clone(&server),
+                instance,
+                client,
+                library_path,
+                save_path,
+            )
+            .await
+            .with_context(|| format!("Server {}", server))
+        });
         tasks.push(task);
     }
 
+    let mut errors = 0;
     for result in join_all(tasks).await {
-        match result {
-            Err(e) => eprintln!("{}", e),
-            Ok(Err(e)) => eprintln!("{}", e),
+        let err = match result {
+            Err(e) => e.into(),
+            Ok(Err(e)) => e,
             Ok(Ok(tasks)) => {
                 for result in join_all(tasks).await {
-                    match result {
-                        Err(e) => eprintln!("{}", e),
-                        Ok(Err(e)) => eprintln!("{}", e),
-                        Ok(Ok(_)) => (),
-                    }
+                    let err = match result {
+                        Err(e) => e.into(),
+                        Ok(Err(e)) => e,
+                        Ok(Ok(_)) => continue,
+                    };
+
+                    eprintln!("feed: {err}");
+                    errors += 1;
                 }
+
+                continue;
             }
-        }
+        };
+
+        eprintln!("feed: {err}");
+        errors += 1;
     }
 
+    if errors > 0 {
+        notify(&format!("Feed downloaded with {errors} errors"));
+    } else {
+        notify("Feed download successful");
+    }
     Ok(())
 }
 

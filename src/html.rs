@@ -58,7 +58,7 @@ fn get_urls<'a, T: Selectable<'a>>(doc: T, base_url: &Option<String>) -> Vec<Url
                     }
                 })
                 .map_err(|err| {
-                    eprintln!("{err}");
+                    eprintln!("feed: {err}");
                 })
         })
         .filter_map(|res| res.ok())
@@ -152,7 +152,7 @@ pub async fn clean_html(
             };
 
             if let Some(err) = err {
-                eprintln!("{err}");
+                eprintln!("feed: {err}");
             }
 
             urls
@@ -184,7 +184,7 @@ async fn load_img(url: Url, client: Client) -> Result<Img> {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_owned());
 
-    let res = client.get(url).await?;
+    let res = client.get("image", url).await?;
     let mime = res
         .content_type
         .and_then(|h| Mime::from_str(h.to_str().ok()?).ok())
