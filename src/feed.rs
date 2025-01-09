@@ -52,8 +52,7 @@ pub async fn load_feed(
         tasks.push(task);
     }
 
-    let res: Result<Vec<JoinHandle<Result<()>>>> = Ok(tasks);
-    res
+    Ok(tasks)
 }
 
 async fn load_entry(
