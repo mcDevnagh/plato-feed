@@ -12,12 +12,12 @@ reader that syncs an e-reader with [RSS](https://en.wikipedia.org/wiki/RSS) and
 [[libraries.hooks]]
 path = "Feed"
 program = "bin/feed/plato-feed"
-sort-method = "file-name"
+sort-method = "year"
 first-column = "title-and-author"
 second-column = "year"
 ```
 4. Whenever the `Feed` folder is opened, this hook will check if there are any
-books that haven't been downloaded and will fetch them if need be.
+articles that haven't been downloaded and will fetch them if need be.
 
 ## Building
 The easiest way to build this project is to use
@@ -34,9 +34,6 @@ on your system you can compile the project with:
 rustup target add arm-unknown-linux-gnueabihf
 cargo build --release --target=arm-unknown-linux-gnueabihf
 ```
-
-# TODO
-- [ ] add cover image
 
 # Acknowledgements
 This hook is based on the work done for the following projects.
