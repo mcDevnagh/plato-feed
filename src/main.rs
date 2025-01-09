@@ -18,10 +18,9 @@ use settings::Settings;
 async fn run(args: Args, settings: Settings) -> Result<()> {
     if !args.online {
         if !args.wifi {
-            plato::notify("Establishing a network connection.");
-            plato::set_wifi(true);
+            plato::notify("Please enable WiFi to update feeds");
         } else {
-            plato::notify("Waiting for the network to come up.");
+            plato::notify("Waiting for the network to come up");
         }
         let mut line = String::new();
         std::io::stdin().read_line(&mut line)?;
