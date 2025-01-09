@@ -9,7 +9,7 @@ use feed_rs::{
     parser,
 };
 use serde_json::json;
-use sha2::{Digest, Sha224};
+use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
 use url::Url;
 
@@ -90,7 +90,7 @@ async fn load_entry(
         entry.id.clone()
     };
 
-    let mut hasher = Sha224::new();
+    let mut hasher = Sha256::new();
     hasher.update(&entry.id);
     let filename = format!("{:x}.epub", hasher.finalize());
     let filename = save_path.join(filename);
