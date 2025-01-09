@@ -105,6 +105,12 @@ pub struct Instance {
     /// <div id="#custom-article">Included!</div>
     /// ```
     pub filter_element: Option<String>,
+
+    /// The author to set for the entries in the feed, when the feed does not specify.
+    /// - `None` to use the title of the feed as the default author
+    /// - `Some("")` specifies not to set an author, when the feed does not specify one
+    /// - any other value makes that the default author
+    pub default_author: Option<String>,
 }
 
 impl Default for Instance {
@@ -115,6 +121,7 @@ impl Default for Instance {
             download_full_article: None,
             enable_filter: true,
             filter_element: None,
+            default_author: None,
         }
     }
 }

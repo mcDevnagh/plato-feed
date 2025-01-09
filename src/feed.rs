@@ -67,9 +67,24 @@ async fn load_entry(
     let mut builder: EpubBuilder<ZipLibrary> =
         EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?).map_err(|e| anyhow!(e))?;
 
-    let authors: Vec<String> = entry.authors.into_iter().map(|a| a.name).collect();
+    let mut authors: Vec<String> = entry
+        .authors
+        .into_iter()
+        .map(|a| a.name)
+        .filter(|a| !a.is_empty())
+        .collect();
+    if authors.is_empty() {
+        let author = server_instance
+            .default_author
+            .as_ref()
+            .unwrap_or(&publisher);
+        if !author.is_empty() {
+            authors.push(author.to_owned());
+        }
+    }
     let author = authors.join(", ");
     builder.set_authors(authors);
+
     builder.set_generator(program_name());
 
     let date = if let Some(date) = entry.published {

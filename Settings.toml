@@ -1,8 +1,8 @@
-# Number of concurrent HTTP Requests to make
-concurrent-requests = 5
-
 # Whether files should be placed in a directory named after the server they have been pulled from.
 use-server-name-directories = true
+
+# Number of concurrent HTTP Requests to make
+concurrent-requests = 5
 
 # A list of server names mapped to a URL containing a valid RSS/Atom feed
 [servers]
@@ -45,3 +45,9 @@ enable-filter = true
 # Omit to only use the default list.
 # This does not apply if enable-filter is false.
 #filter-element = ""
+
+# The author to set for the entries in the feed, when the feed does not specify.
+# Omit this setting to use the title of the feed as the default author.
+# "" specifies not to set an author, when the feed does not specify one.
+# Any other value makes that the default author.
+default-author = ""
