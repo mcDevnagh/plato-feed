@@ -10,12 +10,3 @@ pub fn notify(message: &str) {
     });
     println!("{event}");
 }
-
-/// Set the device's Wi-Fi state to `enable`.
-pub fn set_wifi(enable: bool) {
-    let event = json!({
-        "type": "setWifi",
-        "enable": enable,
-    });
-    println!("{event}");
-}

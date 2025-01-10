@@ -15,7 +15,9 @@ use futures::future::join_all;
 use plato::notify;
 use settings::Settings;
 
-async fn run(args: Args, settings: Settings) -> Result<()> {
+async fn run() -> Result<()> {
+    let args = Args::new()?;
+    let settings = Settings::load().with_context(|| "failed to load settings")?;
     if !args.online {
         if !args.wifi {
             plato::notify("Please enable WiFi to update feeds");
@@ -104,14 +106,10 @@ async fn run(args: Args, settings: Settings) -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     log_panics::init();
-    let args = Args::new()?;
-    let settings = Settings::load().with_context(|| "failed to load settings")?;
-    if let Err(err) = run(args, settings).await {
-        notify(&format!("Error: {}", err));
-        return Err(err).with_context(|| "feed");
+    if let Err(err) = run().await {
+        notify(&err.to_string());
+        eprintln!("feed: {err}");
     }
-
-    Ok(())
 }
