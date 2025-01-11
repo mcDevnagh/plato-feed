@@ -113,7 +113,8 @@ async fn load_entry(
         Utc::now()
     };
     builder.set_publication_date(date);
-    let date = date.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let year = date.format("%Y").to_string();
+    let date = date.format("%Y%m%dT%H%M%S").to_string();
 
     let title = if let Some(title) = entry.title {
         builder.set_title(&title.content);
@@ -178,7 +179,7 @@ async fn load_entry(
         "info": {
             "title": &title,
             "author": author,
-            "year": date,
+            "year": year,
             "publisher": publisher.as_ref(),
             "identifier": entry.id,
             "added": Local::now().naive_local(),
