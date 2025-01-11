@@ -13,13 +13,14 @@ use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
 use url::Url;
 
-use crate::{client::Client, html::clean_html, plato::notify, settings::Instance};
+use crate::{client::Client, db::Db, html::clean_html, plato::notify, settings::Instance};
 
 pub fn program_name() -> String {
     format!("plato-feed/{}", env!("CARGO_PKG_VERSION"))
 }
 
 pub async fn load_feed(
+    db: Arc<Db>,
     server: Arc<String>,
     instance: Arc<Instance>,
     client: Client,
@@ -40,6 +41,7 @@ pub async fn load_feed(
 
     let mut tasks = Vec::new();
     for entry in feed.entries {
+        let db = Arc::clone(&db);
         let client = client.clone();
         let base = base.clone();
         let library_path = Arc::clone(&library_path);
@@ -49,17 +51,21 @@ pub async fn load_feed(
         let server = Arc::clone(&server);
         let task = tokio::spawn(async move {
             let id = entry.id.clone();
-            load_entry(
-                entry,
-                base,
-                client,
-                library_path,
-                publisher,
-                save_path,
-                instance,
+            db.update(
+                id.clone(),
+                entry.updated,
+                load_entry(
+                    entry,
+                    base,
+                    client,
+                    library_path,
+                    publisher,
+                    save_path,
+                    instance,
+                ),
             )
             .await
-            .with_context(|| format!("{} of {}", id, &server))
+            .with_context(|| format!("{} of {}", id, &Arc::clone(&server)))
         });
         tasks.push(task);
     }
@@ -75,7 +81,7 @@ async fn load_entry(
     publisher: Arc<String>,
     save_path: Arc<PathBuf>,
     server_instance: Arc<Instance>,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let mut builder: EpubBuilder<ZipLibrary> =
         EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?).map_err(|e| anyhow!(e))?;
 
@@ -118,12 +124,8 @@ async fn load_entry(
 
     let mut hasher = Sha256::new();
     hasher.update(&entry.id);
-    let filename = format!("{:x}.epub", hasher.finalize());
+    let filename = format!("{}-{:x}.epub", date, hasher.finalize());
     let filename = save_path.join(filename);
-    if filename.exists() {
-        return Ok(());
-    }
-
     let path = filename.strip_prefix(library_path.as_ref())?;
 
     let content = if Some(true) == server_instance.download_full_article {
@@ -189,7 +191,7 @@ async fn load_entry(
     });
     println!("{event}");
     notify(&format!("Added {title}"));
-    Ok(())
+    Ok(filename)
 }
 
 async fn download_full_article<D: Display>(

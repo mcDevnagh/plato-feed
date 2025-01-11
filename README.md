@@ -12,7 +12,7 @@ reader that syncs an e-reader with [RSS](https://en.wikipedia.org/wiki/RSS) and
 [[libraries.hooks]]
 path = "Feed"
 program = "bin/feed/plato-feed"
-sort-method = "year"
+sort-method = "file-name"
 first-column = "title-and-author"
 second-column = "year"
 ```

@@ -1,5 +1,6 @@
 mod args;
 mod client;
+mod db;
 mod feed;
 mod html;
 mod plato;
@@ -10,6 +11,7 @@ use std::{fs, sync::Arc};
 use anyhow::{Context, Result};
 use args::Args;
 use client::Client;
+use db::Db;
 use feed::{load_feed, program_name};
 use futures::future::join_all;
 use plato::notify;
@@ -43,12 +45,14 @@ async fn run() -> Result<()> {
         }
     }
 
+    let db = Arc::new(Db::new()?);
     let client = Client::new(program_name(), settings.concurrent_requests)?;
     let library_path = Arc::new(args.library_path);
     let save_path = Arc::new(args.save_path);
 
     let mut tasks = Vec::with_capacity(settings.servers.len());
     for (server, instance) in settings.servers {
+        let db = Arc::clone(&db);
         let instance = Arc::new(instance);
         let client = client.clone();
         let library_path = Arc::clone(&library_path);
@@ -60,6 +64,7 @@ async fn run() -> Result<()> {
         let server = Arc::new(server);
         let task = tokio::spawn(async move {
             load_feed(
+                db,
                 Arc::clone(&server),
                 instance,
                 client,
