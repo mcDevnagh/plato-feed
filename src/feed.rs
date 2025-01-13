@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -27,7 +27,8 @@ pub async fn load_feed(
     library_path: Arc<PathBuf>,
     save_path: Arc<PathBuf>,
 ) -> Result<Vec<JoinHandle<Result<()>>>> {
-    let res = client.get(&server, &instance.url).await?;
+    notify(&format!("loading {}", &server));
+    let res = client.get(&instance.url).await?;
     let base = Url::parse(&instance.url).ok().and_then(|u| match u.host() {
         Some(url::Host::Domain(host)) => Some(host.to_owned()),
         _ => None,
@@ -130,7 +131,7 @@ async fn load_entry(
     let path = filename.strip_prefix(library_path.as_ref())?;
 
     let content = if Some(true) == server_instance.download_full_article {
-        download_full_article(&title, entry.links, &mut builder, client, server_instance).await?
+        download_full_article(entry.links, &mut builder, client, server_instance).await?
     } else {
         match entry.content {
             Some(Content {
@@ -158,8 +159,7 @@ async fn load_entry(
                         publisher.as_ref()
                     ));
                 }
-                download_full_article(&title, entry.links, &mut builder, client, server_instance)
-                    .await?
+                download_full_article(entry.links, &mut builder, client, server_instance).await?
             }
         }
     };
@@ -195,8 +195,7 @@ async fn load_entry(
     Ok(filename)
 }
 
-async fn download_full_article<D: Display>(
-    title: D,
+async fn download_full_article(
     links: Vec<Link>,
     builder: &mut EpubBuilder<ZipLibrary>,
     client: Client,
@@ -214,7 +213,7 @@ async fn download_full_article<D: Display>(
         .or_else(|| links.first())
         .ok_or_else(|| anyhow!("No link to download"))?;
 
-    let res = client.get(title, link.href.as_str()).await?;
+    let res = client.get(link.href.as_str()).await?;
     let html = clean_html(
         String::from_utf8(res.body.to_vec())?,
         builder,

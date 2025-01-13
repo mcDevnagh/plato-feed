@@ -10,7 +10,7 @@ use regex::{Captures, Regex};
 use scraper::{selectable::Selectable, Html, Selector};
 use url::Url;
 
-use crate::client::Client;
+use crate::{client::Client, plato::notify};
 
 lazy_static! {
     static ref CLEAR_SELECTOR: Selector = Selector::parse(
@@ -128,6 +128,12 @@ pub async fn clean_html(
         })
     };
 
+    if urls.len() > 1 {
+        notify(&format!("loading {} images", urls.len()));
+    } else if urls.len() > 0 {
+        notify("loading 1 image");
+    }
+
     let tasks = urls
         .into_iter()
         .map(|url| {
@@ -195,7 +201,7 @@ async fn load_img(url: Url, client: Client) -> Result<Img> {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_owned());
 
-    let res = client.get("image", url).await?;
+    let res = client.get(url).await?;
     let mime = res
         .content_type
         .and_then(|h| Mime::from_str(h.to_str().ok()?).ok())

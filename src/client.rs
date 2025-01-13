@@ -1,6 +1,5 @@
 use std::{
     cmp::min,
-    fmt::Display,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -14,8 +13,6 @@ use reqwest::{
     IntoUrl,
 };
 use tokio::sync::Semaphore;
-
-use crate::plato::notify;
 
 pub struct Client {
     client: Arc<reqwest::Client>,
@@ -40,13 +37,12 @@ impl Client {
         })
     }
 
-    pub async fn get<D: Display, U: IntoUrl>(&self, resource: D, url: U) -> Result<Response> {
+    pub async fn get<U: IntoUrl>(&self, url: U) -> Result<Response> {
         let permit = self.semaphore.acquire().await?;
         if self.sigterm.load(Ordering::Relaxed) {
             return Err(anyhow!("SIGTERM"));
         }
 
-        notify(&format!("loading {resource}"));
         let res = self.client.get(url).send().await?;
         if self.sigterm.load(Ordering::Relaxed) {
             return Err(anyhow!("SIGTERM"));
