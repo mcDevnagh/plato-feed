@@ -69,7 +69,7 @@ fn get_urls<'a, T: Selectable<'a>>(doc: T, base_url: &Option<String>) -> Vec<Url
                     }
                 })
                 .map_err(|err| {
-                    eprintln!("feed: {err}");
+                    eprintln!("feed: {:?}", err);
                 })
         })
         .filter_map(|res| res.ok())
@@ -169,7 +169,7 @@ pub async fn clean_html(
             };
 
             if let Some(err) = err {
-                eprintln!("feed: {err}");
+                eprintln!("feed: {:?}", err);
             }
 
             urls

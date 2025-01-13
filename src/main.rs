@@ -90,7 +90,7 @@ async fn run() -> Result<()> {
                         Ok(Ok(_)) => continue,
                     };
 
-                    eprintln!("feed: {err}");
+                    eprintln!("feed: {:?}", err);
                     errors += 1;
                 }
 
@@ -98,7 +98,7 @@ async fn run() -> Result<()> {
             }
         };
 
-        eprintln!("feed: {err}");
+        eprintln!("feed: {:?}", err);
         errors += 1;
     }
 
@@ -115,6 +115,6 @@ async fn main() {
     log_panics::init();
     if let Err(err) = run().await {
         notify(&err.to_string());
-        eprintln!("feed: {err}");
+        eprintln!("feed: {:?}", err);
     }
 }

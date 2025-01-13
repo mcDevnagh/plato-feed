@@ -96,7 +96,7 @@ impl Drop for Db {
         let writer = match File::create(DB_PATH) {
             Ok(f) => BufWriter::new(f),
             Err(err) => {
-                eprintln!("feed: {err}");
+                eprintln!("feed: {:?}", err);
                 return;
             }
         };
@@ -110,7 +110,7 @@ impl Drop for Db {
 
         let mut serializer = Serializer::pretty(writer);
         if let Err(err) = inner.new.serialize(&mut serializer) {
-            eprintln!("feed: {err}");
+            eprintln!("feed: {:?}", err);
         }
     }
 }
