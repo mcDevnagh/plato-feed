@@ -13,7 +13,18 @@ use url::Url;
 use crate::client::Client;
 
 lazy_static! {
-    static ref CLEAR_SELECTOR: Selector = Selector::parse("iframe, source, script, br").unwrap();
+    static ref CLEAR_SELECTOR: Selector = Selector::parse(
+        r"
+br,
+form,
+hr,
+iframe,
+input,
+script,
+source,
+style"
+    )
+    .unwrap();
     static ref IMG_SELECTOR: Selector = Selector::parse("img").unwrap();
     static ref IMG_REGEX: Regex =
         Regex::new(r#"<\s*img [^>]*(src\s*=\s*"([^"]*)")[^>]*>"#).unwrap();
