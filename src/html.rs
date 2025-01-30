@@ -113,7 +113,10 @@ pub async fn clean_html(
                     } else {
                         Some(Vec::new())
                     };
-                    html = elem.html();
+                    html = format!(
+                        "<!DOCTYPE html><html><head></head><body>{}</body></html>",
+                        elem.html()
+                    );
                     break;
                 }
             }
