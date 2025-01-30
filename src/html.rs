@@ -25,6 +25,7 @@ source,
 style"
     )
     .unwrap();
+    static ref CLEAR_REGEX: Regex = Regex::new(r"&[^;]*;").unwrap();
     static ref IMG_SELECTOR: Selector = Selector::parse("img").unwrap();
     static ref IMG_REGEX: Regex =
         Regex::new(r#"<\s*img [^>]*(src\s*=\s*"([^"]*)")[^>]*>"#).unwrap();
@@ -177,6 +178,7 @@ pub async fn clean_html(
         .filter_map(|(a, b)| b.map(|b| (a, b)))
         .collect::<HashMap<_, _>>();
 
+    html = CLEAR_REGEX.replace_all(&html, " ").to_string();
     Bytes::copy_from_slice(
         IMG_REGEX
             .replace_all(&html, |caps: &Captures| {
