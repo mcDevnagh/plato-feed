@@ -4,9 +4,15 @@ use-server-name-directories = true
 # Number of concurrent HTTP Requests to make
 concurrent-requests = 5
 
-# A list of server names mapped to a URL containing a valid RSS/Atom feed
+# A list of servers which serve RSS/Atom feeds
 [servers]
+
+# A uncategorized server instance (see categories, below)
+"Rust Blog" = { url = "https://blog.rust-lang.org/feed.xml" }
+
+# Another server instance detailing available per-feed settings
 [servers."Plato Releases"]
+# the URL of the feed
 url = "https://github.com/baskerville/plato/releases.atom"
 
 # Whether to download any images on the page and include them in the epub.
@@ -51,3 +57,17 @@ enable-filter = true
 # "" specifies not to set an author, when the feed does not specify one.
 # Any other value makes that the default author.
 default-author = ""
+
+# Hooks Category
+# servers can be organized into categories, like the Hooks category below.
+# Each category gets its own directories, regardless of `use-server-name-directories`.
+# "server name directories" get placed in the category directory, if on;
+# otherwise, entries from feeds of the same category are saved directly in its category's directory
+[servers.Hooks]
+"Plato Feed Releases" = { url = "https://github.com/mcdevnagh/plato-feed/releases.atom" }
+"Plato OPDS Releases" = { url = "https://github.com/videah/plato-opds/releases.atom" }
+
+# Categories can have sub-categories, and sub-categories can have sub-categories ad infinitum
+# The directory structure goes Category, Sub-category, Sub-category, etc.
+[servers.Hooks.Unmaintained]
+"Plato Calibre Releases" = { url = "https://github.com/buckley-w-david/plato-calibre/releases.atom" }

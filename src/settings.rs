@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use serde::{self, Deserialize, Serialize};
@@ -15,7 +19,47 @@ pub struct Settings {
     /// from.
     pub use_server_name_directories: bool,
     /// Mapping of server names to their respective [Instance] settings.
-    pub servers: HashMap<String, Instance>,
+    pub servers: HashMap<String, InstanceDirectory>,
+}
+
+pub struct Server {
+    pub server: String,
+    pub dir: PathBuf,
+    pub instance: Instance,
+}
+
+fn flatten_servers_helper<P: AsRef<Path>>(
+    output: &mut Vec<Server>,
+    server: String,
+    prefix: P,
+    instance_dir: InstanceDirectory,
+    use_server_name_directories: bool,
+) {
+    match instance_dir {
+        InstanceDirectory::Parent(children) => {
+            for (key, value) in children {
+                flatten_servers_helper(
+                    output,
+                    key,
+                    prefix.as_ref().join(&server),
+                    value,
+                    use_server_name_directories,
+                );
+            }
+        }
+        InstanceDirectory::Leaf(instance) => {
+            let dir = if use_server_name_directories {
+                prefix.as_ref().join(&server)
+            } else {
+                prefix.as_ref().to_path_buf()
+            };
+            output.push(Server {
+                server,
+                dir,
+                instance,
+            })
+        }
+    }
 }
 
 impl Settings {
@@ -25,6 +69,21 @@ impl Settings {
 
         toml::from_str(&s)
             .with_context(|| format!("can't parse TOML content from {}", SETTINGS_PATH))
+    }
+
+    pub fn flatten_servers(mut self, root: PathBuf) -> impl IntoIterator<Item = Server> {
+        let mut output = Vec::new();
+        for (server, instance_dir) in self.servers.drain() {
+            flatten_servers_helper(
+                &mut output,
+                server,
+                &root,
+                instance_dir,
+                self.use_server_name_directories,
+            );
+        }
+
+        output
     }
 }
 
@@ -36,6 +95,13 @@ impl Default for Settings {
             servers: HashMap::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InstanceDirectory {
+    Parent(HashMap<String, InstanceDirectory>),
+    Leaf(Instance),
 }
 
 /// Holds the settings for a single instance of a server.

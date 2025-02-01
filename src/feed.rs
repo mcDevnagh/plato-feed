@@ -25,7 +25,7 @@ pub async fn load_feed(
     instance: Arc<Instance>,
     client: Client,
     library_path: Arc<PathBuf>,
-    save_path: Arc<PathBuf>,
+    save_dir: Arc<PathBuf>,
 ) -> Result<Vec<JoinHandle<Result<()>>>> {
     notify(&format!("loading {}", &server));
     let res = client.get(&instance.url).await?;
@@ -46,7 +46,7 @@ pub async fn load_feed(
         let client = client.clone();
         let base = base.clone();
         let library_path = Arc::clone(&library_path);
-        let save_path = Arc::clone(&save_path);
+        let save_dir = Arc::clone(&save_dir);
         let publisher = Arc::clone(&publisher);
         let instance = Arc::clone(&instance);
         let server = Arc::clone(&server);
@@ -61,7 +61,7 @@ pub async fn load_feed(
                     client,
                     library_path,
                     publisher,
-                    save_path,
+                    save_dir,
                     instance,
                 ),
             )

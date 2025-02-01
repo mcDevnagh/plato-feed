@@ -34,34 +34,28 @@ async fn run() -> Result<()> {
         fs::create_dir(&args.save_path)?;
     }
 
-    // Create directory for each instance name in the save path.
-    if settings.use_server_name_directories {
-        for name in settings.servers.keys() {
-            let instance_path = args.save_path.join(name);
-            if !instance_path.exists() {
-                fs::create_dir(&instance_path)
-                    .with_context(|| format!("creating server directory: {}", name))?;
-            }
-        }
-    }
-
     let db = Arc::new(Db::new()?);
     let client = Client::new(program_name(), settings.concurrent_requests)?;
     let library_path = Arc::new(args.library_path);
-    let save_path = Arc::new(args.save_path);
 
     let mut tasks = Vec::with_capacity(settings.servers.len());
-    for (server, instance) in settings.servers {
+    for server in settings.flatten_servers(args.save_path) {
+        if !server.dir.exists() {
+            let res = fs::create_dir_all(&server.dir)
+                .with_context(|| format!("creating server directory: {}", server.dir.display()));
+            if let Err(err) = res {
+                notify(&err.to_string());
+                eprintln!("feed: {:?}", err);
+                continue;
+            }
+        }
+
         let db = Arc::clone(&db);
-        let instance = Arc::new(instance);
+        let instance = Arc::new(server.instance);
         let client = client.clone();
         let library_path = Arc::clone(&library_path);
-        let save_path = if settings.use_server_name_directories {
-            Arc::new(save_path.join(&server))
-        } else {
-            Arc::clone(&save_path)
-        };
-        let server = Arc::new(server);
+        let save_dir = Arc::new(server.dir);
+        let server = Arc::new(server.server);
         let task = tokio::spawn(async move {
             load_feed(
                 db,
@@ -69,7 +63,7 @@ async fn run() -> Result<()> {
                 instance,
                 client,
                 library_path,
-                save_path,
+                save_dir,
             )
             .await
             .with_context(|| format!("Server {}", server))
