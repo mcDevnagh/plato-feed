@@ -36,7 +36,7 @@ fn flatten_servers_helper<P: AsRef<Path>>(
     use_server_name_directories: bool,
 ) {
     match instance_dir {
-        InstanceDirectory::Parent(children) => {
+        InstanceDirectory::Directory(children) => {
             for (key, value) in children {
                 flatten_servers_helper(
                     output,
@@ -47,7 +47,7 @@ fn flatten_servers_helper<P: AsRef<Path>>(
                 );
             }
         }
-        InstanceDirectory::Leaf(instance) => {
+        InstanceDirectory::Instance(instance) => {
             let dir = if use_server_name_directories {
                 prefix.as_ref().join(&server)
             } else {
@@ -97,11 +97,12 @@ impl Default for Settings {
     }
 }
 
+/// Instances can be organized into directories
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InstanceDirectory {
-    Parent(HashMap<String, InstanceDirectory>),
-    Leaf(Instance),
+    Directory(HashMap<String, InstanceDirectory>),
+    Instance(Instance),
 }
 
 /// Holds the settings for a single instance of a server.
