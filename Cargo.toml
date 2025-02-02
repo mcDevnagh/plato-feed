@@ -16,6 +16,7 @@ feed-rs = "2.3"
 futures = "0.3"
 lazy_static = "1.5"
 log-panics = { version = "2.1", features = ["with-backtrace"] }
+maud = "0.26"
 mime_guess = "2.0"
 regex = "1"
 reqwest = { version = "0.12.2", features = [

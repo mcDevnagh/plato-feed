@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{io::Cursor, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -8,6 +8,7 @@ use feed_rs::{
     model::{Content, Link},
     parser,
 };
+use maud::{html, DOCTYPE};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
@@ -17,6 +18,18 @@ use crate::{client::Client, db::Db, html::clean_html, plato::notify, settings::I
 
 pub fn program_name() -> String {
     format!("plato-feed/{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn find_link(links: &Vec<Link>) -> Option<&Link> {
+    links
+        .iter()
+        .find(|l| {
+            l.media_type
+                .as_ref()
+                .map_or(false, |mt| mt.contains("html"))
+        })
+        .or_else(|| links.iter().find(|l| l.media_type.is_none()))
+        .or_else(|| links.first())
 }
 
 pub async fn load_feed(
@@ -39,6 +52,7 @@ pub async fn load_feed(
     } else {
         Arc::clone(&server)
     };
+    let links = Arc::new(feed.links);
 
     let mut tasks = Vec::new();
     for entry in feed.entries {
@@ -50,6 +64,7 @@ pub async fn load_feed(
         let publisher = Arc::clone(&publisher);
         let instance = Arc::clone(&instance);
         let server = Arc::clone(&server);
+        let links = Arc::clone(&links);
         let task = tokio::spawn(async move {
             let id = entry.id.clone();
             db.update(
@@ -63,6 +78,7 @@ pub async fn load_feed(
                     publisher,
                     save_dir,
                     instance,
+                    links,
                 ),
             )
             .await
@@ -82,6 +98,7 @@ async fn load_entry(
     publisher: Arc<String>,
     save_path: Arc<PathBuf>,
     server_instance: Arc<Instance>,
+    links: Arc<Vec<Link>>,
 ) -> Result<PathBuf> {
     let mut builder: EpubBuilder<ZipLibrary> =
         EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?).map_err(|e| anyhow!(e))?;
@@ -130,8 +147,9 @@ async fn load_entry(
     let filename = save_path.join(filename);
     let path = filename.strip_prefix(library_path.as_ref())?;
 
+    let link = find_link(&entry.links);
     let content = if Some(true) == server_instance.download_full_article {
-        download_full_article(entry.links, &mut builder, client, server_instance).await?
+        download_full_article(link, &mut builder, client, server_instance).await?
     } else {
         match entry.content {
             Some(Content {
@@ -159,11 +177,33 @@ async fn load_entry(
                         publisher.as_ref()
                     ));
                 }
-                download_full_article(entry.links, &mut builder, client, server_instance).await?
+                download_full_article(link, &mut builder, client, server_instance).await?
             }
         }
     };
 
+    let title_page = {
+        let entry_href = link.map(|l| l.href.as_str()).unwrap_or("");
+        let publisher_href = find_link(&links).map(|l| l.href.as_str()).unwrap_or("");
+        let publisher = publisher.as_ref();
+        html! {
+            (DOCTYPE)
+            html {
+                head {}
+                body {
+                    h1 { (title) }
+                    @if &author != publisher {
+                        p { (author) }
+                    }
+                    p { a href=(publisher_href) { (publisher) } }
+                    p { a href=(entry_href) { (entry_href) } }
+                }
+            }
+        }
+    };
+    builder
+        .add_content(EpubContent::new("title.html", Cursor::new(title_page.0)))
+        .map_err(|e| anyhow!(e))?;
     builder
         .add_content(EpubContent::new("article.html", content.as_ref()))
         .map_err(|e| anyhow!(e))?;
@@ -196,22 +236,12 @@ async fn load_entry(
 }
 
 async fn download_full_article(
-    links: Vec<Link>,
+    link: Option<&Link>,
     builder: &mut EpubBuilder<ZipLibrary>,
     client: Client,
     server_instance: Arc<Instance>,
 ) -> Result<Bytes> {
-    let link = links
-        .iter()
-        .find(|l| {
-            l.media_type
-                .as_ref()
-                .map(|mt| mt.contains("html"))
-                .is_some()
-        })
-        .or_else(|| links.iter().find(|l| l.media_type.is_none()))
-        .or_else(|| links.first())
-        .ok_or_else(|| anyhow!("No link to download"))?;
+    let link = link.ok_or_else(|| anyhow!("No link to download"))?;
 
     let res = client.get(link.href.as_str()).await?;
     let html = clean_html(
