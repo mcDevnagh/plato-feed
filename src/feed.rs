@@ -1,4 +1,4 @@
-use std::{io::Cursor, path::PathBuf, sync::Arc};
+use std::{fs, io::Cursor, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -9,6 +9,7 @@ use feed_rs::{
     parser,
 };
 use maud::{html, DOCTYPE};
+use mime_guess::MimeGuess;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
@@ -90,6 +91,39 @@ pub async fn load_feed(
     Ok(tasks)
 }
 
+fn add_cover_img<'a>(
+    builder: &mut EpubBuilder<ZipLibrary>,
+    img: &'a PathBuf,
+    publisher: &str,
+) -> Result<&'a str> {
+    if !img.exists() {
+        return Err(anyhow!("no such image {} for {}", img.display(), publisher));
+    }
+
+    let Some(path) = img.file_name() else {
+        return Err(anyhow!(
+            "failed to get file name for image {} for {}",
+            img.display(),
+            publisher
+        ));
+    };
+
+    let Some(mime) = MimeGuess::from_path(img).first() else {
+        return Err(anyhow!(
+            "failed to get mimetype for image {} for {}",
+            img.display(),
+            publisher
+        ));
+    };
+
+    let file = fs::File::open(img)?;
+    builder
+        .add_resource(path, file, mime.as_ref())
+        .map_err(|e| anyhow!(e))?;
+    path.to_str()
+        .ok_or_else(|| anyhow!("failed to display {:?}", path))
+}
+
 async fn load_entry(
     entry: feed_rs::model::Entry,
     base: Option<String>,
@@ -102,6 +136,18 @@ async fn load_entry(
 ) -> Result<PathBuf> {
     let mut builder: EpubBuilder<ZipLibrary> =
         EpubBuilder::new(ZipLibrary::new().map_err(|e| anyhow!(e))?).map_err(|e| anyhow!(e))?;
+
+    let img = if let Some(img) = &server_instance.title_img {
+        match add_cover_img(&mut builder, img, publisher.as_str()) {
+            Ok(img) => Some(img),
+            Err(err) => {
+                eprintln!("feed: {:?}", err);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let mut authors: Vec<String> = entry
         .authors
@@ -149,7 +195,7 @@ async fn load_entry(
 
     let link = find_link(&entry.links);
     let content = if Some(true) == server_instance.download_full_article {
-        download_full_article(link, &mut builder, client, server_instance).await?
+        download_full_article(link, &mut builder, client, Arc::clone(&server_instance)).await?
     } else {
         match entry.content {
             Some(Content {
@@ -177,11 +223,11 @@ async fn load_entry(
                         publisher.as_ref()
                     ));
                 }
-                download_full_article(link, &mut builder, client, server_instance).await?
+                download_full_article(link, &mut builder, client, Arc::clone(&server_instance))
+                    .await?
             }
         }
     };
-
     let title_page = {
         let entry_href = link.map(|l| l.href.as_str()).unwrap_or("");
         let publisher_href = find_link(&links).map(|l| l.href.as_str()).unwrap_or("");
@@ -189,8 +235,13 @@ async fn load_entry(
         html! {
             (DOCTYPE)
             html {
-                head {}
+                head {
+                   link href=("title.css") type=("text/css") rel=("stylesheet");
+                }
                 body {
+                    @if let Some(img) = img {
+                        div { img src=(img); }
+                    }
                     h1 { (title) }
                     @if &author != publisher {
                         p { (author) }
@@ -201,6 +252,13 @@ async fn load_entry(
             }
         }
     };
+    builder
+        .add_resource(
+            "title.css",
+            Cursor::new("img, div { width: 100%; }"),
+            "text/css",
+        )
+        .map_err(|e| anyhow!(e))?;
     builder
         .add_content(EpubContent::new("title.html", Cursor::new(title_page.0)))
         .map_err(|e| anyhow!(e))?;

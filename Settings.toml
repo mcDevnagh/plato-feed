@@ -58,6 +58,10 @@ enable-filter = true
 # Any other value makes that the default author.
 default-author = ""
 
+# The path to the image to use on the title page for all entries in the feed
+# Omit to leave the title page image-less
+#title-img = ""
+
 # Hooks Category
 # servers can be organized into categories, like the Hooks category below.
 # Each category gets its own directories, regardless of `use-server-name-directories`.

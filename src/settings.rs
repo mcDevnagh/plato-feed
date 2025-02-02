@@ -178,6 +178,11 @@ pub struct Instance {
     /// - `Some("")` specifies not to set an author, when the feed does not specify one
     /// - any other value makes that the default author
     pub default_author: Option<String>,
+
+    /// The image to use on the title page for all entries in the feed
+    /// - `None` leaves the title page image-less
+    /// - `Some(img)` copies the `img` file to the EPUB for each entry of the feed
+    pub title_img: Option<PathBuf>,
 }
 
 impl Default for Instance {
@@ -189,6 +194,7 @@ impl Default for Instance {
             enable_filter: true,
             filter_element: None,
             default_author: None,
+            title_img: None,
         }
     }
 }
